@@ -1,4 +1,4 @@
-const CACHE = 'momentum-v5';
+const CACHE = 'momentum-v6';
 
 self.addEventListener('install', e => {
   e.waitUntil(
