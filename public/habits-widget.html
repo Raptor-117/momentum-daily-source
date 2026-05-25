@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Flow — Habits</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+  }
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #111827;
+    --sub: #374151;
+    --muted: #9ca3af;
+    --border: #e5e7eb;
+    --accent: #3b82f6;
+    --green: #22c55e;
+    --yellow: #eab308;
+    --orange: #f97316;
+    --red: #ef4444;
+    --hit: #16a34a;
+  }
+  body.dark {
+    --bg: #111827;
+    --card: #1f2937;
+    --text: #f3f4f6;
+    --sub: #d1d5db;
+    --muted: #6b7280;
+    --border: #374151;
+    --accent: #60a5fa;
+    --green: #4ade80;
+    --hit: #4ade80;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header-left { display: flex; align-items: center; gap: 8px; }
+  .header-title { font-size: 16px; font-weight: 700; color: var(--text); }
+  .header-date { font-size: 11px; color: var(--muted); }
+  .open-btn {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    padding: 4px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+  }
+
+  .summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  .progress-track {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+  .summary-text { font-size: 12px; font-weight: 700; white-space: nowrap; }
+
+  .list { padding: 8px 12px; }
+  .habit-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    margin-bottom: 6px;
+    background: var(--card);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  .habit-emoji { font-size: 18px; flex-shrink: 0; width: 26px; text-align: center; }
+  .habit-info { flex: 1; min-width: 0; }
+  .habit-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .habit-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .habit-bar {
+    width: 100%;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 4px;
+    overflow: hidden;
+  }
+  .habit-bar-fill { height: 100%; border-radius: 2px; }
+
+  .habit-count {
+    font-size: 18px;
+    font-weight: 800;
+    min-width: 28px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .count-done { color: var(--green); }
+  .count-none { color: var(--muted); }
+
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+  }
+  .empty-icon { font-size: 36px; margin-bottom: 8px; }
+  .empty-text { font-size: 14px; font-weight: 500; }
+  .empty-sub { font-size: 12px; margin-top: 4px; }
+
+  .footer {
+    text-align: center;
+    padding: 8px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span style="font-size:20px">☀️</span>
+    <div>
+      <div class="header-title" id="title">Today's Habits</div>
+      <div class="header-date" id="dateLabel"></div>
+    </div>
+  </div>
+  <a class="open-btn" id="openBtn" href="./index.html">Open App</a>
+</div>
+
+<div class="summary-bar" id="summaryBar" style="display:none">
+  <div class="progress-track">
+    <div class="progress-fill" id="overallFill"></div>
+  </div>
+  <div class="summary-text" id="summaryText"></div>
+</div>
+
+<div class="list" id="habitList"></div>
+<div class="footer" id="footer"></div>
+
+<script>
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function getWeekStart(dateStr, firstDay) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  const diff = (day - firstDay + 7) % 7;
+  d.setDate(d.getDate() - diff);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+
+function getWeekDays(startStr) {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(startStr + 'T00:00:00');
+    d.setDate(d.getDate() + i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    days.push(`${y}-${m}-${dd}`);
+  }
+  return days;
+}
+
+function barColor(pct) {
+  if (pct >= 100) return '#22c55e';
+  if (pct >= 75)  return '#84cc16';
+  if (pct >= 50)  return '#eab308';
+  if (pct >= 25)  return '#f97316';
+  return '#ef4444';
+}
+
+function render() {
+  const today = todayStr();
+  const now = new Date();
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('dateLabel').textContent =
+    `${dayNames[now.getDay()]}, ${now.getDate()} ${monthNames[now.getMonth()]}`;
+
+  let data = null;
+  try {
+    const raw = localStorage.getItem('flow-realm-storage');
+    if (raw) data = JSON.parse(raw).state;
+  } catch(e) {}
+
+  const list = document.getElementById('habitList');
+
+  if (!data || !data.activities || data.activities.length === 0) {
+    list.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">📋</div>
+        <div class="empty-text">No habits yet</div>
+        <div class="empty-sub">Open the app to set up your habits</div>
+      </div>`;
+    document.getElementById('footer').textContent = `Last updated ${now.toLocaleTimeString()}`;
+    return;
+  }
+
+  // Apply theme
+  if (data.darkMode) document.body.classList.add('dark');
+
+  // Gamify title
+  if (data.gamify) document.getElementById('title').textContent = '⚔ Daily Quests';
+
+  const { activities, logs, weekStartDay = 6 } = data;
+  const weekStart = getWeekStart(today, weekStartDay);
+  const weekDays  = getWeekDays(weekStart);
+
+  let loggedToday = 0;
+  let html = '';
+
+  activities.forEach(a => {
+    const todayCount = (logs[a.id] || {})[today] || 0;
+    const weekTotal  = weekDays.reduce((s, d) => s + ((logs[a.id] || {})[d] || 0), 0);
+    const pct        = a.hasTarget ? Math.round((weekTotal / a.weeklyTarget) * 100) : 0;
+    const hit        = a.hasTarget && weekTotal >= a.weeklyTarget;
+    const logged     = todayCount > 0;
+    if (logged) loggedToday++;
+
+    const barWidth = Math.min(100, pct);
+    const color    = barColor(pct);
+
+    html += `
+      <div class="habit-row">
+        <div class="habit-emoji">${a.emoji}</div>
+        <div class="habit-info">
+          <div class="habit-name">${a.name}</div>
+          ${a.hasTarget
+            ? `<div class="habit-sub">${hit ? '✓' : ''} ${weekTotal}/${a.weeklyTarget} this week · ${pct}%</div>
+               <div class="habit-bar"><div class="habit-bar-fill" style="width:${barWidth}%;background:${color}"></div></div>`
+            : a.notes
+              ? `<div class="habit-sub">${a.notes}</div>`
+              : ''
+          }
+        </div>
+        <div class="habit-count ${logged ? 'count-done' : 'count-none'}">${todayCount || '–'}</div>
+      </div>`;
+  });
+
+  list.innerHTML = html;
+
+  // Summary bar
+  const total = activities.length;
+  const pctDone = total > 0 ? Math.round((loggedToday / total) * 100) : 0;
+  document.getElementById('summaryBar').style.display = 'flex';
+  document.getElementById('overallFill').style.width = pctDone + '%';
+  document.getElementById('overallFill').style.background = barColor(pctDone);
+  document.getElementById('summaryText').textContent = `${loggedToday}/${total} today`;
+  document.getElementById('footer').textContent = `Updated ${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+}
+
+render();
+// Auto-refresh every 60 seconds
+setInterval(render, 60000);
+</script>
+</body>
+</html>

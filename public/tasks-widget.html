@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Flow — Tasks</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+  }
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #111827;
+    --sub: #374151;
+    --muted: #9ca3af;
+    --border: #e5e7eb;
+    --accent: #3b82f6;
+    --red: #ef4444;
+    --orange: #f97316;
+    --yellow: #ca8a04;
+    --green: #16a34a;
+    --purple: #7c3aed;
+    --gray: #6b7280;
+  }
+  body.dark {
+    --bg: #111827;
+    --card: #1f2937;
+    --text: #f3f4f6;
+    --sub: #d1d5db;
+    --muted: #6b7280;
+    --border: #374151;
+    --accent: #60a5fa;
+    --red: #f87171;
+    --green: #4ade80;
+    --yellow: #fbbf24;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header-left { display: flex; align-items: center; gap: 8px; }
+  .header-title { font-size: 16px; font-weight: 700; color: var(--text); }
+  .header-sub { font-size: 11px; color: var(--muted); }
+  .open-btn {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    padding: 4px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px 4px;
+  }
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    flex: 1;
+  }
+  .section-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    padding: 1px 7px;
+    border-radius: 10px;
+  }
+
+  .list { padding: 0 12px 8px; }
+  .task-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    background: var(--card);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+  }
+  .task-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 4px;
+    flex-shrink: 0;
+  }
+  .task-body { flex: 1; min-width: 0; }
+  .task-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .task-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .complexity-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    align-self: center;
+  }
+
+  .stats-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .stat-card {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    text-align: center;
+  }
+  .stat-num { font-size: 20px; font-weight: 800; }
+  .stat-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+  }
+  .empty-icon { font-size: 36px; margin-bottom: 8px; }
+  .footer {
+    text-align: center;
+    padding: 8px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span style="font-size:20px">✅</span>
+    <div>
+      <div class="header-title" id="title">Tasks</div>
+      <div class="header-sub" id="headerSub"></div>
+    </div>
+  </div>
+  <a class="open-btn" href="./index.html">Open App</a>
+</div>
+
+<div id="content"></div>
+<div class="footer" id="footer"></div>
+
+<script>
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+const COMPLEXITY_COLOR = {
+  critical: { bg: '#fee2e2', text: '#991b1b', dark_bg: '#7f1d1d', dark_text: '#fca5a5', accent: '#ef4444' },
+  hard:     { bg: '#ffedd5', text: '#9a3412', dark_bg: '#7c2d12', dark_text: '#fb923c', accent: '#f97316' },
+  medium:   { bg: '#fef9c3', text: '#854d0e', dark_bg: '#713f12', dark_text: '#fbbf24', accent: '#eab308' },
+  easy:     { bg: '#dcfce7', text: '#166534', dark_bg: '#14532d', dark_text: '#4ade80', accent: '#22c55e' },
+};
+
+const SECTION_COLOR = {
+  overdue:  '#ef4444',
+  today:    '#8b5cf6',
+  upcoming: '#3b82f6',
+  none:     '#6b7280',
+};
+
+function render() {
+  const today = todayStr();
+  const now = new Date();
+
+  let data = null;
+  try {
+    const raw = localStorage.getItem('flow-realm-storage');
+    if (raw) data = JSON.parse(raw).state;
+  } catch(e) {}
+
+  const content = document.getElementById('content');
+
+  if (!data || !data.tasks) {
+    content.innerHTML = `<div class="empty"><div class="empty-icon">✅</div><div style="font-size:14px;font-weight:500">No tasks yet</div><div style="font-size:12px;margin-top:4px">Open the app to add tasks</div></div>`;
+    document.getElementById('footer').textContent = `Updated ${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+    return;
+  }
+
+  const isDark = data.darkMode;
+  if (isDark) document.body.classList.add('dark');
+  if (data.gamify) document.getElementById('title').textContent = '📜 Contracts';
+
+  const { tasks, tags = [] } = data;
+  const active   = tasks.filter(t => !t.completed);
+  const done     = tasks.filter(t => t.completed);
+  const overdue  = active.filter(t => t.dueDate && t.dueDate < today).sort(byPriority);
+  const dueToday = active.filter(t => t.dueDate === today).sort(byPriority);
+  const upcoming = active.filter(t => t.dueDate && t.dueDate > today).sort(byPriority);
+  const nodl     = active.filter(t => !t.dueDate).sort(byPriority);
+
+  document.getElementById('headerSub').textContent = `${active.length} active · ${done.length} done`;
+
+  // Stats row
+  let html = `<div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-num" style="color:var(--red)">${overdue.length}</div>
+      <div class="stat-label">Overdue</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" style="color:var(--purple)">${dueToday.length}</div>
+      <div class="stat-label">Due Today</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" style="color:var(--green)">${done.length}</div>
+      <div class="stat-label">Done</div>
+    </div>
+  </div>`;
+
+  function taskCard(t, accentColor) {
+    const cx = COMPLEXITY_COLOR[t.complexity] || COMPLEXITY_COLOR.easy;
+    const bg  = isDark ? cx.dark_bg  : cx.bg;
+    const col = isDark ? cx.dark_text : cx.text;
+    const date = t.dueDate
+      ? new Date(t.dueDate + 'T00:00:00').toLocaleDateString('en-AU', {day:'numeric',month:'short'})
+      : '';
+    const isOverdue = t.dueDate && t.dueDate < today;
+    return `
+      <div class="task-row" style="border-left-color:${accentColor}">
+        <div class="task-body">
+          <div class="task-title">${t.title}</div>
+          <div class="task-meta">${t.complexity.charAt(0).toUpperCase()+t.complexity.slice(1)}${date ? ` · ${isOverdue ? '⚠ ' : ''}${date}` : ''}</div>
+        </div>
+      </div>`;
+  }
+
+  function section(label, icon, items, color, max=5) {
+    if (!items.length) return '';
+    const shown = items.slice(0, max);
+    const more  = items.length - max;
+    return `
+      <div class="section-header">
+        <div class="section-label">${icon} ${label}</div>
+        <div class="section-badge" style="background:${color}">${items.length}</div>
+      </div>
+      <div class="list">
+        ${shown.map(t => taskCard(t, color)).join('')}
+        ${more > 0 ? `<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px">+${more} more</div>` : ''}
+      </div>`;
+  }
+
+  html += section('Overdue',     '⚠',  overdue,  SECTION_COLOR.overdue,  3);
+  html += section('Due Today',   '📅', dueToday, SECTION_COLOR.today,    4);
+  html += section('Upcoming',    '🗓', upcoming,  SECTION_COLOR.upcoming, 3);
+  html += section('No Deadline', '📋', nodl,      SECTION_COLOR.none,    3);
+
+  if (!active.length) {
+    html += `<div class="empty"><div class="empty-icon">🏆</div><div style="font-size:14px;font-weight:500">All clear!</div></div>`;
+  }
+
+  content.innerHTML = html;
+  document.getElementById('footer').textContent = `Updated ${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+}
+
+function byPriority(a, b) {
+  const rank = { critical: 0, hard: 1, medium: 2, easy: 3 };
+  return (rank[a.complexity] || 2) - (rank[b.complexity] || 2);
+}
+
+render();
+setInterval(render, 60000);
+</script>
+</body>
+</html>

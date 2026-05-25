@@ -1,0 +1,12 @@
+# Tell Netlify's CDN never to cache the service worker
+# so browsers always pick up the latest version on deploy
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Cache all hashed assets aggressively (safe — filenames change each build)
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

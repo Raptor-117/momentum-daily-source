@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Custom scrollbar for RPG mode */
+  .scrollbar-rpg::-webkit-scrollbar { width: 4px; }
+  .scrollbar-rpg::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-rpg::-webkit-scrollbar-thumb { background: #2a2245; border-radius: 4px; }
+
+  /* Scroll snap for phone screens */
+  .scroll-smooth { scroll-behavior: smooth; }
+}
+
+@layer utilities {
+  .font-display-rpg  { font-family: 'Cinzel', serif; }
+  .font-display-clean { font-family: 'Playfair Display', Georgia, serif; }
+}
