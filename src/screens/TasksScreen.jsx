@@ -77,14 +77,11 @@ const RECURRENCE_OPTS = [
 ];
 const RECURRENCE_ICON = { daily: '🔁', weekly: '🔄', monthly: '📅' };
 
+// Non-recurring only: did the user complete this task permanently?
+// Recurring tasks never go to Completed — they roll forward to next due date.
 function isEffectivelyComplete(task) {
   if (!task.recurrence || task.recurrence === 'none') return task.completed;
-  if (!task.completed || !task.lastCompleted) return false;
-  const today = todayStr();
-  if (task.recurrence === 'daily')   return task.lastCompleted === today;
-  if (task.recurrence === 'weekly')  return Math.floor((new Date(today+'T00:00:00')-new Date(task.lastCompleted+'T00:00:00'))/86400000) < 7;
-  if (task.recurrence === 'monthly') return task.lastCompleted.slice(0,7) === today.slice(0,7);
-  return task.completed;
+  return false;
 }
 
 function sortByDueThenComplexity(a, b) {
@@ -235,7 +232,7 @@ function TaskCard({ task, theme, accentColor, gamify }) {
   const [expanded, setExpanded] = useState(true);
   const [editing,  setEditing]  = useState(false);
   const today      = todayStr();
-  const isDone     = isEffectivelyComplete(task);
+  const isDone      = isEffectivelyComplete(task);
   const isRecurring = task.recurrence && task.recurrence !== 'none';
   const isOverdue   = task.dueDate && task.dueDate < today && !isDone;
 
@@ -253,7 +250,7 @@ function TaskCard({ task, theme, accentColor, gamify }) {
         <button
           onClick={() => toggleTask(task.id)}
           className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
-            isDone     ? 'bg-green-500 border-green-500 text-white'
+            isDone    ? 'bg-green-500 border-green-500 text-white'
             : isOverdue ? 'border-red-400'
             : 'border-gray-300'
           }`}
@@ -307,15 +304,13 @@ function TaskCard({ task, theme, accentColor, gamify }) {
 }
 
 // ─── Collapsible section ──────────────────────────────────────────────────────
-function Section({ title, icon, count, accentColor, tasks, theme, defaultOpen = true, gamify }) {
-  const [open, setOpen] = useState(defaultOpen);
-
+function Section({ title, icon, count, accentColor, tasks, theme, open, onToggle, gamify }) {
   if (count === 0) return null;
 
   return (
     <div className="mb-3">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={onToggle}
         className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl mb-1 border ${theme.card} ${theme.cardBorder}`}
         style={accentColor ? { borderLeftColor: accentColor, borderLeftWidth: '3px' } : {}}
       >
@@ -440,19 +435,27 @@ function AddTaskForm({ theme, onClose }) {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function TasksScreen({ theme, gamify }) {
-  const { tasks, tags } = useStore();
-  const [showAdd,          setShowAdd]          = useState(false);
-  const [showCompleted,    setShowCompleted]    = useState(false);
-  const [copied,           setCopied]           = useState(false);
-  const [filterOpen,          setFilterOpen]          = useState(false);
-  const [filterComplexities,  setFilterComplexities]  = useState([]);
-  const [filterTags,          setFilterTags]          = useState([]);
+  const { tasks, tags, uiPrefs, setUiPref, setTaskSection } = useStore();
+  const [showAdd,  setShowAdd]  = useState(false);
+  const [copied,      setCopied]      = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const taskPrefs = uiPrefs?.tasks || {};
+  const sections  = taskPrefs.sections || { urgent: true, overdue: true, dueToday: true, next7Days: true, upcoming: true, noDeadline: true, completed: false };
+  const filterComplexities = taskPrefs.filterComplexities || [];
+  const filterTags         = taskPrefs.filterTags         || [];
+  const filterOpen         = taskPrefs.filterOpen         || false;
 
   const today  = todayStr();
   const title  = gamify ? '📜 Contracts' : 'Tasks';
 
   const complexityOptions = ['critical', 'hard', 'medium', 'easy'];
   const tagOptions        = tags.map(t => t.label);
+
+  function setFilterComplexities(val) { setUiPref('tasks', 'filterComplexities', typeof val === 'function' ? val(filterComplexities) : val); }
+  function setFilterTags(val)         { setUiPref('tasks', 'filterTags', typeof val === 'function' ? val(filterTags) : val); }
+  function setFilterOpen(val)         { setUiPref('tasks', 'filterOpen', typeof val === 'function' ? val(filterOpen) : val); }
+  function setShowCompleted(val)      { setTaskSection('completed', typeof val === 'function' ? val(sections.completed) : val); }
 
   function toggleComplexity(key) {
     setFilterComplexities(prev => {
@@ -478,17 +481,32 @@ export default function TasksScreen({ theme, gamify }) {
     });
   }
 
-  const active      = applyFilters(tasks.filter(t => !isEffectivelyComplete(t)));
-  const done        = tasks
+  function applySearch(list) {
+    if (!searchQuery.trim()) return list;
+    const q = searchQuery.trim().toLowerCase();
+    return list.filter(t => {
+      if (t.title?.toLowerCase().includes(q)) return true;
+      if (t.notes?.toLowerCase().includes(q)) return true;
+      const tagLabels = (t.tags || []).map(tid => tags.find(tg => tg.id === tid)?.label?.toLowerCase()).filter(Boolean);
+      return tagLabels.some(l => l.includes(q));
+    });
+  }
+
+  const active      = applySearch(applyFilters(tasks.filter(t => !isEffectivelyComplete(t))));
+  const done        = applySearch(tasks
     .filter(t => isEffectivelyComplete(t))
-    .sort((a, b) => (b.completedDate || '').localeCompare(a.completedDate || ''));
+    .sort((a, b) => (b.completedDate || '').localeCompare(a.completedDate || '')));
   const activeFilters = (filterComplexities.length > 0 ? 1 : 0) + (filterTags.length > 0 ? 1 : 0);
 
-  // Partition
-  const overdue    = active.filter(t => t.dueDate && t.dueDate < today).sort(sortByDueThenComplexity);
-  const dueToday   = active.filter(t => t.dueDate === today).sort(sortByDueThenComplexity);
-  const upcoming   = active.filter(t => t.dueDate && t.dueDate > today).sort(sortByDueThenComplexity);
-  const noDeadline = active.filter(t => !t.dueDate).sort((a, b) => COMPLEXITY_RANK[a.complexity] - COMPLEXITY_RANK[b.complexity]);
+  // Partition — urgent (critical) gets its own top section, excluded from date sections
+  const urgent     = active.filter(t => t.complexity === 'critical').sort(sortByDueThenComplexity);
+  const nonUrgent  = active.filter(t => t.complexity !== 'critical');
+  const next7End   = (() => { const d = new Date(today + 'T00:00:00'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
+  const overdue    = nonUrgent.filter(t => t.dueDate && t.dueDate < today).sort(sortByDueThenComplexity);
+  const dueToday   = nonUrgent.filter(t => t.dueDate === today).sort(sortByDueThenComplexity);
+  const next7Days  = nonUrgent.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= next7End).sort(sortByDueThenComplexity);
+  const upcoming   = nonUrgent.filter(t => t.dueDate && t.dueDate > next7End).sort(sortByDueThenComplexity);
+  const noDeadline = nonUrgent.filter(t => !t.dueDate).sort((a, b) => COMPLEXITY_RANK[a.complexity] - COMPLEXITY_RANK[b.complexity]);
 
   function handleCopyText() {
     const text = buildClaudeText(tasks, tags, today);
@@ -530,6 +548,25 @@ export default function TasksScreen({ theme, gamify }) {
         <button onClick={() => exportCSV(tasks, tags)} className={`flex-1 py-2 rounded-xl text-xs font-semibold ${theme.btnSecondary}`}>
           ↓ CSV
         </button>
+      </div>
+
+      {/* Search bar */}
+      <div className="relative mb-3">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none" style={{ opacity: 0.5 }}>🔍</span>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search tasks…"
+          className={`w-full pl-8 pr-8 py-2 rounded-xl text-sm border outline-none ${theme.input}`}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-base leading-none opacity-50 hover:opacity-100"
+            aria-label="Clear search"
+          >×</button>
+        )}
       </div>
 
       {/* Filter panel — toggle */}
@@ -574,13 +611,25 @@ export default function TasksScreen({ theme, gamify }) {
 
       {/* Sections */}
       <Section
+        title={gamify ? 'Urgent Contracts' : 'Urgent'}
+        icon="🚨"
+        count={urgent.length}
+        accentColor="#dc2626"
+        tasks={urgent}
+        theme={theme}
+        open={sections.urgent ?? true}
+        onToggle={() => setTaskSection('urgent', !(sections.urgent ?? true))}
+        gamify={gamify}
+      />
+      <Section
         title={gamify ? 'Breached' : 'Overdue'}
         icon="⚠"
         count={overdue.length}
         accentColor="#ef4444"
         tasks={overdue}
         theme={theme}
-        defaultOpen={true}
+        open={sections.overdue}
+        onToggle={() => setTaskSection('overdue', !sections.overdue)}
         gamify={gamify}
       />
       <Section
@@ -590,7 +639,19 @@ export default function TasksScreen({ theme, gamify }) {
         accentColor="#8b5cf6"
         tasks={dueToday}
         theme={theme}
-        defaultOpen={true}
+        open={sections.dueToday}
+        onToggle={() => setTaskSection('dueToday', !sections.dueToday)}
+        gamify={gamify}
+      />
+      <Section
+        title="Next 7 Days"
+        icon="📆"
+        count={next7Days.length}
+        accentColor="#0ea5e9"
+        tasks={next7Days}
+        theme={theme}
+        open={sections.next7Days ?? true}
+        onToggle={() => setTaskSection('next7Days', !(sections.next7Days ?? true))}
         gamify={gamify}
       />
       <Section
@@ -600,7 +661,8 @@ export default function TasksScreen({ theme, gamify }) {
         accentColor="#3b82f6"
         tasks={upcoming}
         theme={theme}
-        defaultOpen={true}
+        open={sections.upcoming}
+        onToggle={() => setTaskSection('upcoming', !sections.upcoming)}
         gamify={gamify}
       />
       <Section
@@ -610,12 +672,13 @@ export default function TasksScreen({ theme, gamify }) {
         accentColor="#6b7280"
         tasks={noDeadline}
         theme={theme}
-        defaultOpen={true}
+        open={sections.noDeadline}
+        onToggle={() => setTaskSection('noDeadline', !sections.noDeadline)}
         gamify={gamify}
       />
 
       {/* Empty state */}
-      {active.length === 0 && !showAdd && (
+      {urgent.length === 0 && active.length === 0 && !showAdd && (
         <div className={`text-center py-10 ${theme.muted}`}>
           <p className="text-3xl mb-2">{gamify ? '🏆' : '✅'}</p>
           <p className="text-sm font-medium">{gamify ? 'All contracts fulfilled!' : 'All clear!'}</p>
@@ -627,18 +690,18 @@ export default function TasksScreen({ theme, gamify }) {
       {done.length > 0 && (
         <div className="mt-2">
           <button
-            onClick={() => setShowCompleted(s => !s)}
+            onClick={() => setTaskSection('completed', !sections.completed)}
             className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl mb-1 border ${theme.card} ${theme.cardBorder}`}
             style={{ borderLeftColor: '#22c55e', borderLeftWidth: '3px' }}
           >
             <span className="text-sm">✓</span>
             <span className={`text-xs font-bold uppercase tracking-widest flex-1 text-left ${theme.textSub}`}>
-              {gamify ? 'Completed' : 'Completed'}
+              Completed
             </span>
             <span className="text-xs px-2 py-0.5 rounded-full font-bold text-white bg-green-500">{done.length}</span>
-            <span className={`text-xs ml-1 ${theme.muted}`}>{showCompleted ? '▾' : '▸'}</span>
+            <span className={`text-xs ml-1 ${theme.muted}`}>{sections.completed ? '▾' : '▸'}</span>
           </button>
-          {showCompleted && done.map(t => <TaskCard key={t.id} task={t} theme={theme} />)}
+          {sections.completed && done.map(t => <TaskCard key={t.id} task={t} theme={theme} />)}
         </div>
       )}
     </div>

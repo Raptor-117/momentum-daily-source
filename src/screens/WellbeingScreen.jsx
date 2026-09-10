@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor,
   KeyboardSensor, useSensor, useSensors, DragOverlay,
@@ -9,7 +9,14 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
-import { todayStr, toDateStr, formatDisplayDate, getWeekStart } from '../data';
+import { todayStr, toDateStr, formatDisplayDate, getWeekStart, MONTH_NAMES_FULL } from '../data';
+
+const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+function offsetDate(dateStr, delta) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 
 // ─── Drag handle (journal reorder) ────────────────────────────────────────────
 function JournalDragHandle({ handleProps, theme }) {
@@ -378,6 +385,7 @@ function JournalTab({ theme, dateStr, gamify }) {
   const { journalPrompts, journalEntries, addJournalPrompt, setJournalPromptOrder } = useStore();
   const today   = todayStr();
   const isPast  = dateStr < today;
+
   const [showAdd,   setShowAdd]   = useState(false);
   const [newPrompt, setNewPrompt] = useState('');
   const [activeId,  setActiveId]  = useState(null);
@@ -504,34 +512,55 @@ function habitStat(activity, count, weekTotal) {
 // ─── Daily Message tab ────────────────────────────────────────────────────────
 function DailyMessageTab({ theme }) {
   const { activities, getCount, getWeeklyTotal, logActivity, wellbeingNotes, dailyDrafts, saveDailyDraft, weekStartDay, dailyMessageDefaults } = useStore();
-  const today = todayStr();
-  const draft = dailyDrafts[today] || {};
-
-  // If today has no draft yet, fall back to most recent previous day's book/audio
-  const prevDraft = !draft.book && !draft.audio
-    ? Object.entries(dailyDrafts)
-        .filter(([d]) => d < today)
-        .sort(([a], [b]) => b.localeCompare(a))[0]?.[1] || {}
-    : {};
-
+  const today    = todayStr();
   const defaults = dailyMessageDefaults || {};
 
-  const [book,   setBook]   = useState(draft.book  || prevDraft.book  || defaults.book  || '');
-  const [audio,  setAudio]  = useState(draft.audio || prevDraft.audio || '');
-  const [notes,  setNotes]  = useState(draft.notes || defaults.notes || '');
+  const [viewDate, setViewDate] = useState(today);
+  const isToday = viewDate === today;
+
+  // Helper: get the right draft + fallback for a given date
+  function draftForDate(dateStr) {
+    const d = dailyDrafts[dateStr] || {};
+    const prev = !d.book && !d.audio
+      ? Object.entries(dailyDrafts)
+          .filter(([dd]) => dd < dateStr)
+          .sort(([a], [b]) => b.localeCompare(a))[0]?.[1] || {}
+      : {};
+    return { book: d.book || prev.book || '', audio: d.audio || prev.audio || '', notes: d.notes || '' };
+  }
+
+  const initDraft = draftForDate(today);
+  const [book,   setBook]   = useState(initDraft.book  || defaults.book  || '');
+  const [audio,  setAudio]  = useState(initDraft.audio || '');
+  const [notes,  setNotes]  = useState(initDraft.notes || defaults.notes || '');
   const [copied, setCopied] = useState(false);
 
-  const todayNote = wellbeingNotes[today] || '';
+  // When viewDate changes, reload fields from that date's draft
+  useEffect(() => {
+    const d = draftForDate(viewDate);
+    setBook(d.book  || (isToday ? defaults.book  : '') || '');
+    setAudio(d.audio || '');
+    setNotes(d.notes || (isToday ? defaults.notes : '') || '');
+    setCopied(false);
+  }, [viewDate]);
 
-  function updateBook(v)  { setBook(v);  saveDailyDraft(today, { book: v }); }
-  function updateAudio(v) { setAudio(v); saveDailyDraft(today, { audio: v }); }
-  function updateNotes(v) { setNotes(v); saveDailyDraft(today, { notes: v }); }
+  const viewNote = wellbeingNotes[viewDate] || '';
 
-  const weekStart  = getWeekStart(today, weekStartDay);
-  const acctHabits = activities.filter(a => a.accountability && isDueOn(a, today));
+  function updateBook(v)  { setBook(v);  saveDailyDraft(viewDate, { book: v }); }
+  function updateAudio(v) { setAudio(v); saveDailyDraft(viewDate, { audio: v }); }
+  function updateNotes(v) { setNotes(v); saveDailyDraft(viewDate, { notes: v }); }
 
-  // Format: DD/MM/YYYY
-  const d = new Date(today + 'T00:00:00');
+  const weekStart  = getWeekStart(viewDate, weekStartDay);
+  const acctHabits = activities.filter(a => a.accountability && isDueOn(a, viewDate));
+
+  // Date navigator label
+  const viewDateObj   = new Date(viewDate + 'T00:00:00');
+  const viewDateLabel = isToday
+    ? 'Today'
+    : `${DAY_NAMES[viewDateObj.getDay()]}, ${viewDateObj.getDate()} ${MONTH_NAMES_FULL[viewDateObj.getMonth()]}`;
+
+  // Format: DD/MM/YYYY for the message itself
+  const d = new Date(viewDate + 'T00:00:00');
   const dateLabel = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
 
   function buildMessage() {
@@ -559,10 +588,10 @@ function DailyMessageTab({ theme }) {
     navigator.clipboard.writeText(msg).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-      // Auto-tick the accountability habit if not already logged today
+      // Auto-tick the accountability habit if not already logged for viewDate
       const acctAct = activities.find(a => a.id === 'accountability');
-      if (acctAct && getCount('accountability', today) === 0) {
-        logActivity('accountability', today, 1);
+      if (acctAct && getCount('accountability', viewDate) === 0) {
+        logActivity('accountability', viewDate, 1);
       }
     });
   }
@@ -578,9 +607,33 @@ function DailyMessageTab({ theme }) {
 
   return (
     <div>
+      {/* Date navigator */}
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={() => setViewDate(d => offsetDate(d, -1))}
+          className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}
+        >◀</button>
+        <div className="flex-1 text-center">
+          <span className={`text-sm font-semibold ${isToday ? theme.hitTarget : theme.text}`}>{viewDateLabel}</span>
+        </div>
+        {!isToday && (
+          <button
+            onClick={() => setViewDate(today)}
+            className={`text-xs px-2.5 py-1 rounded-lg font-semibold ${theme.btnPrimary}`}
+          >Today</button>
+        )}
+        <button
+          onClick={() => { if (!isToday) setViewDate(d => offsetDate(d, 1)); }}
+          disabled={isToday}
+          className={`w-8 h-8 flex items-center justify-center rounded-lg text-base disabled:opacity-30 ${theme.btnSecondary}`}
+        >▶</button>
+      </div>
+
       <div className="mb-4">
         <p className={`text-xs uppercase font-bold tracking-widest mb-0.5 ${theme.muted}`}>💬 Daily Message</p>
-        <p className={`text-xs ${theme.muted}`}>Fill in the details — your habit counts are auto-filled from today</p>
+        <p className={`text-xs ${theme.muted}`}>
+          {isToday ? 'Fill in the details — habit counts are auto-filled from today' : `Generating for ${viewDateLabel} — habit counts pulled from that day`}
+        </p>
       </div>
 
       {/* Book + Audio */}
@@ -615,7 +668,7 @@ function DailyMessageTab({ theme }) {
       ) : (
         <div className={`rounded-xl border shadow-sm overflow-hidden mb-3 ${theme.card} ${theme.cardBorder}`}>
           {acctHabits.map((a, idx) => {
-            const count     = getCount(a.id, today);
+            const count     = getCount(a.id, viewDate);
             const weekTotal = getWeeklyTotal(a.id, weekStart);
             const { label, done, isTick } = habitStat(a, count, weekTotal);
             const statColor = isTick
@@ -640,11 +693,11 @@ function DailyMessageTab({ theme }) {
           rows={4}
           className={`w-full text-sm px-3 py-3 outline-none resize-none bg-transparent rounded-xl ${theme.text}`}
         />
-        {todayNote && (
+        {viewNote && (
           <div className={`border-t px-3 py-2 flex items-center justify-between ${theme.divider}`}>
-            <p className={`text-xs ${theme.muted}`}>You have notes saved for today</p>
+            <p className={`text-xs ${theme.muted}`}>You have notes saved for {isToday ? 'today' : 'this day'}</p>
             <button
-              onClick={() => updateNotes(todayNote)}
+              onClick={() => updateNotes(viewNote)}
               className={`text-xs px-2.5 py-1 rounded-lg font-semibold ${theme.btnSecondary}`}
             >Pull from Notes</button>
           </div>

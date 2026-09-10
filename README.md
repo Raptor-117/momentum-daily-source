@@ -1,6 +1,6 @@
-# Realm — RPG Habit Tracker (Prototype)
+# Momentum Daily
 
-A habit tracker + RPG app. Think Finch × Habitica × SuperBetter.
+A personal habit tracking PWA built for daily accountability, journalling, and business building.
 
 ## Quick Start
 
@@ -9,74 +9,53 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 — you should see the phone mockup.
+Open http://localhost:5173
 
-## What's in here
+## Build & Deploy
+
+```bash
+npm run build   # outputs to dist/
+```
+
+Push to `main` — Cloudflare Pages auto-builds and deploys.
+
+## Stack
+
+- React 18 + Vite
+- Tailwind CSS
+- Zustand (persisted to localStorage)
+- @dnd-kit (drag-and-drop)
+- PWA with service worker
+
+## Screens
+
+| Tab | Description |
+|-----|-------------|
+| Habits | Log daily habits, weekly targets, streaks, reward milestones |
+| Tasks | Task management with recurrence, tags, complexity |
+| Tracker | Monthly heatmap, day breakdown, stats, CSV export |
+| Sanctum | Inner-World (check-in + journal), Notes, Daily Message, Library |
+| Settings | Dark mode, Quest mode, tags, reminders, data import/export |
+
+## Quest Mode
+
+Toggle in Settings to switch the app into a gamified theme — Habits become Quests, Tasks become Contracts, Sanctum becomes Tavern, and the header shows ⚔️ MOMENTUM QUEST ⚔️.
+
+## Key Files
 
 ```
 src/
-├── data/
-│   ├── index.js       ← All static data, mock data, XP formulas
-│   └── theme.js       ← All visual tokens for RPG / Focus modes
-├── store/
-│   └── index.js       ← Zustand store — all app state lives here
-├── components/
-│   └── UI.jsx         ← Shared primitives (bars, badges, checkboxes)
-├── screens/
-│   ├── HomeScreen.jsx  ← Daily habits + collapsible task groups
-│   ├── ClassScreen.jsx ← Class picker + universal skill tree
-│   ├── EventsScreen.jsx← Daily/weekly/class/seasonal events
-│   └── MoodScreen.jsx  ← Emotion check-in, journal, party feed
-└── App.jsx             ← Shell, nav, mode toggle, Iron Will panel
+  App.jsx                     # Root shell, tab nav, notification scheduler
+  store/index.js              # All app state (read this first)
+  data/index.js               # Constants, date helpers, streak calculators
+  data/theme.js               # Light/dark theme tokens
+  screens/
+    HabitsScreen.jsx          # Habit logging, edit mode, reward milestones
+    TasksScreen.jsx           # Task CRUD, recurrence, filtering
+    CalendarStatsScreen.jsx   # Heatmap, stats, CSV export
+    WellbeingScreen.jsx       # Inner-World, Notes, Daily Message, Library
+    SettingsScreen.jsx        # All settings and data management
+public/
+  sw.js                       # Service worker — bump version on each deploy
+  manifest.json               # PWA manifest
 ```
-
-## Key design decisions to know
-
-**Dual mode:** RPG Mode and Focus Mode are the same data, different skin.
-Switching never loses state. All labels, colours, and XP indicators
-swap — components read from `t.*` (theme tokens), never hardcode.
-
-**Iron Will:** Boolean on the user object. When true:
-- All XP × 1.5
-- Streaks reset if no habit logged before midnight (needs a cron job in prod)
-- HP damage on missed dailies (also cron)
-- Badge shown on profile to party members
-
-**Skill tree:** Two universal paths (Habit Focused / Quest Focused) for every class.
-Tiers 1–3 are identical across all classes. Tier 4 is class-flavoured.
-Unlocking costs gold. `unlockedSkills` in the store tracks what's been bought.
-
-**Close Circle:** Hard capped at 5 friends. Enforced in `toggleCloseCircle()`.
-Three sharing targets: `private` | `close_circle` | `party`.
-
-**XP formula:** `xpForLevel(n) = 1000 × n^1.5` — gentle early curve, steeper later.
-Iron Will multiplier is `× 1.5` applied in `addXp()`.
-
-## What's mocked / placeholder
-
-- All data comes from `src/data/index.js` (MOCK_* constants)
-- No persistence — state resets on page refresh
-- Pet screen not yet built (data model is in the handoff doc)
-- Quest screen not yet built
-- No auth
-
-## Milestone roadmap
-
-1. ✅ **Static prototype** — this is it, run it and click around
-2. **Local persistence** — swap Zustand state for Zustand + localStorage
-3. **Supabase** — auth, database, replace MOCK_* with real queries
-4. **Party features** — Supabase Realtime for live party updates
-5. **Game loop** — wire skill bonuses into XP calculations, Iron Will cron
-6. **React Native port** — Expo, reuse all store/data logic
-
-## Recommended stack (when ready to go beyond prototype)
-
-| Layer | Pick |
-|---|---|
-| Mobile | React Native + Expo |
-| State | Zustand (already here) |
-| Backend | Supabase |
-| Push notifications | Expo Notifications |
-| Animations | Reanimated 2 |
-
-See `REALM-dev-handoff.md` for the full data model.

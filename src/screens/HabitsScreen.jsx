@@ -270,10 +270,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
       <div className="flex items-center gap-2">
         <span className="text-xl flex-shrink-0">{activity.emoji}</span>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <p className={`text-sm font-semibold truncate ${theme.text}`}>{activity.name}</p>
-            {activity.accountability && <span className="text-[10px] leading-none" title="Included in daily message">💬</span>}
-          </div>
+          <p className={`text-sm font-semibold truncate ${theme.text}`}>{activity.name}</p>
           {activity.notes && <p className={`text-xs mt-0.5 leading-snug ${theme.muted}`}>{activity.notes}</p>}
           {activity.hasTarget && dueToday && (
             <p className={`text-xs mt-0.5 ${hit ? theme.hitTarget + ' font-medium' : theme.muted}`}>
@@ -283,8 +280,13 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
           {!dueToday && schedLabel && (
             <p className={`text-xs mt-0.5 ${theme.muted}`}>📅 Scheduled: {schedLabel}</p>
           )}
-          {(activity.tags || []).length > 0 && (
+          {(activity.accountability || (activity.tags || []).length > 0) && (
             <div className="flex flex-wrap gap-1 mt-1">
+              {activity.accountability && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-violet-100 text-violet-700 leading-none">
+                  Daily
+                </span>
+              )}
               {allTags.filter(t => (activity.tags || []).includes(t.id)).map(t => (
                 <TagPill key={t.id} tagId={t.id} allTags={allTags} />
               ))}
@@ -422,6 +424,73 @@ function AddHabitForm({ allTags, theme, onSave, onCancel }) {
   );
 }
 
+// ─── Consecutive-weeks helper ─────────────────────────────────────────────────
+// Counts how many weeks in a row (going back from currentWeekStart) all
+// selected habits hit their weekly targets. Includes the current week if done.
+function calcConsecutiveWeeks(habitIds, logs, activities, currentWeekStart) {
+  let count = 0;
+  let ws    = currentWeekStart;
+  while (true) {
+    const wDays  = getWeekDays(ws);
+    const allHit = habitIds.every(id => {
+      const act = activities.find(a => a.id === id);
+      if (!act) return false;
+      const total = wDays.reduce((s, d) => s + ((logs[id] || {})[d] || 0), 0);
+      return total >= (act.weeklyTarget || 1);
+    });
+    if (!allHit) break;
+    count++;
+    ws = offsetDate(ws, -7);
+    if (count > 52) break; // safety cap
+  }
+  return count;
+}
+
+// ─── Milestone card ───────────────────────────────────────────────────────────
+// progress: { current, target, label } — optional, drives the mini bar
+function MilestoneCard({ icon, label, reward, enabled, progress, onToggle, onEdit, onDelete, theme }) {
+  const pct    = progress ? Math.min(100, Math.round((progress.current / progress.target) * 100)) : null;
+  const done   = pct === 100;
+  return (
+    <div className={`px-3 py-2.5 rounded-xl border transition-opacity ${theme.progressBg} ${theme.cardBorder} ${!enabled ? 'opacity-50' : ''}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-base flex-shrink-0">{icon}</span>
+        <div className="flex-1 min-w-0">
+          <p className={`text-xs font-semibold ${theme.text}`}>{label}</p>
+          {reward ? (
+            <p className={`text-[10px] truncate ${theme.muted}`}>🎁 {reward}</p>
+          ) : (
+            <p className={`text-[10px] opacity-50 ${theme.muted}`}>No reward set</p>
+          )}
+        </div>
+        {onToggle && (
+          <button
+            onClick={onToggle}
+            className={`relative w-8 h-4 rounded-full transition-colors duration-200 flex-shrink-0 ${enabled ? theme.toggleOn : theme.toggleOff}`}
+          >
+            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200 ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          </button>
+        )}
+        <button onClick={onEdit}   className={`text-xs px-2 py-1 rounded-lg font-medium flex-shrink-0 ${theme.btnSecondary}`}>Edit</button>
+        <button onClick={onDelete} className="text-xs px-2 py-1 rounded-lg font-medium flex-shrink-0 bg-red-100 text-red-500">✕</button>
+      </div>
+      {progress && (
+        <div className="mt-2 flex items-center gap-2">
+          <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${theme.card}`}>
+            <div
+              className={`h-1.5 rounded-full transition-all duration-500 ${done ? 'bg-green-500' : pct >= 75 ? 'bg-lime-400' : pct >= 50 ? 'bg-yellow-400' : pct >= 25 ? 'bg-orange-400' : 'bg-red-400'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className={`text-[10px] font-semibold tabular-nums flex-shrink-0 ${done ? 'text-green-500' : theme.muted}`}>
+            {done ? '✓ Done!' : progress.label}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Multi-select filter chips ────────────────────────────────────────────────
 function MultiChips({ options, selected, onToggle, theme }) {
   return (
@@ -436,25 +505,26 @@ function MultiChips({ options, selected, onToggle, theme }) {
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
-export default function HabitsScreen({ theme, gamify }) {
-  const { activities, logs, tags, addActivity, deleteActivity, archiveActivity, setActivityOrder, getWeeklyTotal, weekStartDay, rewardMilestone, setRewardMilestone } = useStore();
+export default function HabitsScreen({ theme, gamify, onNavigate }) {
+  const { activities, logs, tags, addActivity, deleteActivity, archiveActivity, setActivityOrder, getWeeklyTotal, weekStartDay, rewardMilestone, setRewardMilestone, milestoneSeen, setMilestoneSeen, uiPrefs, setUiPref, tasks } = useStore();
   const activeActivities = activities.filter(a => !a.archived);
   const [editMode,         setEditMode]         = useState(false);
   const [addingNew,        setAddingNew]        = useState(false);
   const [activeId,         setActiveId]         = useState(null);
   const [filterOpen,       setFilterOpen]       = useState(false);
-  const [filterStatuses,   setFilterStatuses]   = useState([]);
-  const [filterTags,       setFilterTags]       = useState([]);
+
+  const habitPrefs = uiPrefs?.habits || {};
+  const filterStatuses = habitPrefs.filterStatuses || [];
+  const filterTags     = habitPrefs.filterTags     || [];
+  function setFilterStatuses(val) { setUiPref('habits', 'filterStatuses', typeof val === 'function' ? val(filterStatuses) : val); }
+  function setFilterTags(val)     { setUiPref('habits', 'filterTags',     typeof val === 'function' ? val(filterTags) : val); }
   const [viewDate,         setViewDate]         = useState(() => todayStr());
-  const [milestoneTriggered, setMilestoneTriggered] = useState(null); // { label, reward }
-  const [milestoneConfig,    setMilestoneConfig]    = useState(false);
-  const [milestoneCount,     setMilestoneCount]     = useState(String(rewardMilestone?.count ?? 5));
-  const [milestoneReward,    setMilestoneReward]    = useState(rewardMilestone?.reward ?? '');
-  const [newStreakDays,      setNewStreakDays]      = useState('');
-  const [newStreakReward,    setNewStreakReward]    = useState('');
-  const [addingStreak,      setAddingStreak]       = useState(false);
-  const milestoneSeenRef    = useRef(null);    // tracks daily/weekly last trigger count
-  const seenStreaksRef       = useRef(new Set()); // tracks streak milestone IDs seen this session
+  const [milestoneTriggered, setMilestoneTriggered] = useState(null);
+  const [milestoneOpen,      setMilestoneOpen]      = useState(false);
+  const [milestoneModal,     setMilestoneModal]     = useState(null);
+  const [todayTasksOpen,     setTodayTasksOpen]     = useState(false);
+  // milestoneModal: null | { mode:'add'|'edit', type:'daily'|'weekly'|'streak', count, reward, habits, days, streakId }
+  const popupShownRef = useRef(new Set()); // tracks what's been shown this page session (dedupes rapid re-renders)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -464,6 +534,20 @@ export default function HabitsScreen({ theme, gamify }) {
 
   const today       = todayStr();
   const isToday     = viewDate === today;
+
+  // Today's Tasks widget — overdue + due today + urgent, non-completed
+  const todayTasks = (tasks || []).filter(t => {
+    if (t.completed) return false;
+    const isUrgent  = t.complexity === 'critical';
+    const isOverdue = t.dueDate && t.dueDate < today;
+    const isDueToday = t.dueDate === today;
+    return isUrgent || isOverdue || isDueToday;
+  }).sort((a, b) => {
+    // urgent first, then overdue, then due today
+    const rank = t => (t.complexity === 'critical' ? 0 : t.dueDate < today ? 1 : 2);
+    return rank(a) - rank(b);
+  });
+
   const viewDateObj = new Date(viewDate + 'T00:00:00');
   const viewDateLabel = isToday
     ? 'Today'
@@ -478,18 +562,31 @@ export default function HabitsScreen({ theme, gamify }) {
   const weekDays          = getWeekDays(weekStart);
   const todayLoggedCount  = activeActivities.filter(a => (logs[a.id] || {})[today] > 0).length;
   const perfectStreak     = calcPerfectDayStreak(activeActivities, logs);
+  const cwHabits          = rewardMilestone?.consecutiveWeeksHabits || [];
+  const consecutiveWeeksCount = rewardMilestone?.consecutiveWeeksEnabled && cwHabits.length
+    ? calcConsecutiveWeeks(cwHabits, logs, activeActivities, weekStart)
+    : 0;
+  const activeMilestoneCount =
+    ((rewardMilestone?.enabled || rewardMilestone?.dailyCreated) ? 1 : 0) +
+    ((rewardMilestone?.weeklyEnabled || (rewardMilestone?.weeklyHabits || []).length > 0) ? 1 : 0) +
+    ((rewardMilestone?.consecutiveWeeksEnabled || cwHabits.length > 0) ? 1 : 0) +
+    (rewardMilestone?.streakMilestones || []).length;
 
-  // Daily count milestone
+  // ── Milestone watchers (date-aware, persisted via store) ─────────────────────
+
+  // Daily count milestone — resets each calendar day
   useEffect(() => {
     if (!rewardMilestone?.enabled || !rewardMilestone?.count) return;
-    const target = Number(rewardMilestone.count);
-    if (todayLoggedCount === target && milestoneSeenRef.current !== `daily-${target}`) {
-      milestoneSeenRef.current = `daily-${target}`;
+    const target   = Number(rewardMilestone.count);
+    const seenKey  = `daily-${today}`;
+    if (todayLoggedCount >= target && milestoneSeen.daily !== seenKey && !popupShownRef.current.has(seenKey)) {
+      popupShownRef.current.add(seenKey);
+      setMilestoneSeen({ daily: seenKey });
       setMilestoneTriggered({ label: `${target} habits logged today`, reward: rewardMilestone.reward });
     }
-  }, [todayLoggedCount, rewardMilestone]);
+  }, [todayLoggedCount, rewardMilestone, today, milestoneSeen]);
 
-  // Weekly per-habit targets milestone
+  // Weekly per-habit targets milestone — resets each week (keyed by weekStart)
   useEffect(() => {
     if (!rewardMilestone?.weeklyEnabled) return;
     const habitIds = rewardMilestone?.weeklyHabits || [];
@@ -500,61 +597,96 @@ export default function HabitsScreen({ theme, gamify }) {
       const weekTotal = weekDays.reduce((s, d) => s + ((logs[id] || {})[d] || 0), 0);
       return weekTotal >= (act.weeklyTarget || 1);
     });
-    const triggerKey = `weekly-${habitIds.sort().join('-')}`;
-    if (allHit && milestoneSeenRef.current !== triggerKey) {
-      milestoneSeenRef.current = triggerKey;
-      setMilestoneTriggered({
-        label: `All weekly targets hit!`,
-        reward: rewardMilestone.weeklyReward,
-      });
+    const seenKey = `weekly-${weekStart}`;
+    if (allHit && milestoneSeen.weekly !== seenKey && !popupShownRef.current.has(seenKey)) {
+      popupShownRef.current.add(seenKey);
+      setMilestoneSeen({ weekly: seenKey });
+      setMilestoneTriggered({ label: 'All weekly targets hit!', reward: rewardMilestone.weeklyReward });
     }
-  }, [logs, rewardMilestone, weekDays]);
+  }, [logs, rewardMilestone, weekDays, weekStart, milestoneSeen]);
 
-  // Perfect-day streak milestones
+  // Perfect-day streak milestones — keyed by streak milestone id + streak count
   useEffect(() => {
     if (!rewardMilestone?.streakMilestonesEnabled) return;
-    const milestones = rewardMilestone?.streakMilestones || [];
+    const milestones  = rewardMilestone?.streakMilestones || [];
+    const seenStreaks  = milestoneSeen.streaks || {};
     for (const m of milestones) {
-      if (perfectStreak === m.days && !seenStreaksRef.current.has(m.id)) {
-        seenStreaksRef.current.add(m.id);
-        setMilestoneTriggered({
-          label: `${m.days} perfect days in a row!`,
-          reward: m.reward,
-          isStreak: true,
-        });
-        break;
+      if (perfectStreak >= m.days && seenStreaks[m.id] !== perfectStreak) {
+        const seenKey = `streak-${m.id}-${perfectStreak}`;
+        if (!popupShownRef.current.has(seenKey)) {
+          popupShownRef.current.add(seenKey);
+          setMilestoneSeen({ streaks: { ...seenStreaks, [m.id]: perfectStreak } });
+          setMilestoneTriggered({ label: `${m.days} perfect days in a row!`, reward: m.reward, isStreak: true });
+          break;
+        }
       }
     }
-  }, [perfectStreak, rewardMilestone]);
+  }, [perfectStreak, rewardMilestone, milestoneSeen]);
 
-  function saveMilestoneConfig() {
-    setRewardMilestone({ count: Number(milestoneCount) || 5, reward: milestoneReward.trim() });
-    setMilestoneConfig(false);
-  }
+  // Consecutive weeks milestone — fires when N weeks in a row all targets are hit
+  useEffect(() => {
+    if (!rewardMilestone?.consecutiveWeeksEnabled || !consecutiveWeeksCount) return;
+    const target  = rewardMilestone.consecutiveWeeksTarget || 4;
+    if (consecutiveWeeksCount >= target) {
+      const seenKey = `consec-${weekStart}-${consecutiveWeeksCount}`;
+      if (milestoneSeen.consecutiveWeeks !== seenKey && !popupShownRef.current.has(seenKey)) {
+        popupShownRef.current.add(seenKey);
+        setMilestoneSeen({ consecutiveWeeks: seenKey });
+        setMilestoneTriggered({
+          label: `${consecutiveWeeksCount} weeks in a row hitting your targets!`,
+          reward: rewardMilestone.consecutiveWeeksReward,
+        });
+      }
+    }
+  }, [consecutiveWeeksCount, rewardMilestone, weekStart, milestoneSeen]);
 
-  function addStreakMilestone() {
-    const days = Number(newStreakDays);
-    if (!days || days < 1) return;
-    const existing = rewardMilestone?.streakMilestones || [];
-    if (existing.some(m => m.days === days)) return; // no duplicates
-    setRewardMilestone({
-      streakMilestones: [
-        ...existing,
-        { id: `sm-${Date.now()}`, days, reward: newStreakReward.trim() },
-      ].sort((a, b) => a.days - b.days),
-    });
-    setNewStreakDays('');
-    setNewStreakReward('');
-    setAddingStreak(false);
+  function saveMilestoneModal() {
+    const m = milestoneModal;
+    if (!m) return;
+    if (m.type === 'daily') {
+      setRewardMilestone({ enabled: true, dailyCreated: true, count: Number(m.count) || 5, reward: (m.reward || '').trim() });
+    } else if (m.type === 'weekly') {
+      setRewardMilestone({ weeklyEnabled: true, weeklyHabits: m.habits || [], weeklyReward: (m.reward || '').trim() });
+    } else if (m.type === 'weeks') {
+      setRewardMilestone({
+        consecutiveWeeksEnabled: true,
+        consecutiveWeeksHabits:  m.habits || [],
+        consecutiveWeeksTarget:  Number(m.weeksTarget) || 4,
+        consecutiveWeeksReward:  (m.reward || '').trim(),
+      });
+    } else if (m.type === 'streak') {
+      const days = Number(m.days);
+      if (!days || days < 1) return;
+      const existing = rewardMilestone?.streakMilestones || [];
+      if (m.mode === 'edit' && m.streakId) {
+        setRewardMilestone({
+          streakMilestonesEnabled: true,
+          streakMilestones: existing
+            .map(s => s.id === m.streakId ? { ...s, days, reward: (m.reward || '').trim() } : s)
+            .sort((a, b) => a.days - b.days),
+        });
+      } else {
+        const dupe = existing.find(s => s.days === days);
+        setRewardMilestone({
+          streakMilestonesEnabled: true,
+          streakMilestones: dupe
+            ? existing.map(s => s.days === days ? { ...s, reward: (m.reward || '').trim() } : s)
+            : [...existing, { id: `sm-${Date.now()}`, days, reward: (m.reward || '').trim() }].sort((a, b) => a.days - b.days),
+        });
+      }
+    }
+    setMilestoneModal(null);
   }
 
   function deleteStreakMilestone(id) {
+    const remaining = (rewardMilestone?.streakMilestones || []).filter(m => m.id !== id);
     setRewardMilestone({
-      streakMilestones: (rewardMilestone?.streakMilestones || []).filter(m => m.id !== id),
+      streakMilestones: remaining,
+      ...(remaining.length === 0 ? { streakMilestonesEnabled: false } : {}),
     });
   }
 
-  const statusOptions = ['Achieved', 'Behind', 'No target'];
+  const statusOptions = ['Achieved', 'Behind', 'No target', 'Daily'];
   const tagOptions    = tags.map(t => t.label);
 
   function toggleStatus(opt) {
@@ -578,7 +710,8 @@ export default function HabitsScreen({ theme, gamify }) {
       const match =
         (filterStatuses.includes('No target') && !a.hasTarget) ||
         (filterStatuses.includes('Achieved')  && a.hasTarget && wt >= a.weeklyTarget) ||
-        (filterStatuses.includes('Behind')    && a.hasTarget && wt < a.weeklyTarget);
+        (filterStatuses.includes('Behind')    && a.hasTarget && wt < a.weeklyTarget) ||
+        (filterStatuses.includes('Daily')     && !!a.accountability);
       if (!match) return false;
     }
     if (filterTags.length > 0) {
@@ -605,6 +738,56 @@ export default function HabitsScreen({ theme, gamify }) {
 
   return (
     <div className="pb-4">
+
+      {/* Today's Tasks widget */}
+      {isToday && todayTasks.length > 0 && (
+        <div className={`rounded-xl border shadow-sm mb-3 overflow-hidden ${theme.card} ${theme.cardBorder}`}>
+          <button
+            onClick={() => setTodayTasksOpen(o => !o)}
+            className={`w-full flex items-center justify-between px-3 py-2 ${todayTasksOpen ? `border-b ${theme.divider}` : ''}`}
+          >
+            <div className="flex items-center gap-2">
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.muted}`}>📋 Today's Tasks</p>
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${todayTasks.some(t => t.dueDate && t.dueDate < today) ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+                {todayTasks.length}
+              </span>
+            </div>
+            <span className={`text-xs ${theme.muted}`}>{todayTasksOpen ? '▲' : '▼'}</span>
+          </button>
+          {todayTasksOpen && (
+            <div className="divide-y" style={{ borderColor: 'transparent' }}>
+              {todayTasks.slice(0, 5).map(t => {
+                const isUrgent  = t.complexity === 'critical';
+                const isOverdue = t.dueDate && t.dueDate < today;
+                return (
+                  <div key={t.id} className={`flex items-center gap-2 px-3 py-2 border-t ${theme.divider}`}>
+                    <span className="text-sm flex-shrink-0">
+                      {isUrgent ? '🚨' : isOverdue ? '⚠️' : '📌'}
+                    </span>
+                    <span className={`text-sm flex-1 min-w-0 truncate ${theme.text}`}>{t.title}</span>
+                    {isOverdue && (
+                      <span className="text-[10px] font-semibold text-red-500 flex-shrink-0">Overdue</span>
+                    )}
+                  </div>
+                );
+              })}
+              {todayTasks.length > 5 && (
+                <div className={`px-3 py-2 border-t ${theme.divider}`}>
+                  <p className={`text-xs ${theme.muted}`}>+{todayTasks.length - 5} more</p>
+                </div>
+              )}
+              {onNavigate && (
+                <div className={`px-3 py-2 border-t ${theme.divider} text-right`}>
+                  <button onClick={() => onNavigate('tasks')} className={`text-xs font-semibold ${theme.tabActiveText}`}>
+                    View all →
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div>
@@ -686,168 +869,296 @@ export default function HabitsScreen({ theme, gamify }) {
         </div>
       )}
 
-      {/* ── Milestone config panel ── */}
+      {/* ── Reward Milestones panel ── */}
       <div className={`rounded-xl border mb-3 overflow-hidden ${theme.card} ${theme.cardBorder}`}>
         <button
-          onClick={() => setMilestoneConfig(o => !o)}
+          onClick={() => setMilestoneOpen(o => !o)}
           className="w-full flex items-center justify-between px-3 py-2.5"
         >
           <div className="flex items-center gap-2">
             <span className="text-sm">🎁</span>
             <span className={`text-xs font-semibold ${theme.text}`}>Reward Milestones</span>
-            {(rewardMilestone?.enabled || rewardMilestone?.streakMilestonesEnabled) && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">Active</span>
+            {activeMilestoneCount > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">
+                {activeMilestoneCount} active
+              </span>
             )}
           </div>
-          <span className={`text-xs ${theme.muted}`}>{milestoneConfig ? '▾' : '▸'}</span>
+          <span className={`text-xs ${theme.muted}`}>{milestoneOpen ? '▾' : '▸'}</span>
         </button>
 
-        {milestoneConfig && (
-          <div className={`border-t px-3 py-3 space-y-4 ${theme.divider}`}>
+        {milestoneOpen && (
+          <div className={`border-t px-3 py-3 space-y-2 ${theme.divider}`}>
 
-            {/* ── Daily count milestone ── */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.muted}`}>☀️ Daily Habit Count</p>
-                <button
-                  onClick={() => setRewardMilestone({ enabled: !rewardMilestone?.enabled })}
-                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${rewardMilestone?.enabled ? theme.toggleOn : theme.toggleOff}`}
-                >
-                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${rewardMilestone?.enabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`text-xs whitespace-nowrap ${theme.muted}`}>Log</span>
-                <input
-                  type="number" min="1" max="50"
-                  value={milestoneCount}
-                  onChange={e => setMilestoneCount(e.target.value)}
-                  className={`w-14 text-sm text-center px-2 py-1.5 rounded-lg border outline-none ${theme.input}`}
+            {/* Daily milestone card — show if created, even when toggled off */}
+            {(rewardMilestone?.enabled || rewardMilestone?.dailyCreated) && (() => {
+              const target = rewardMilestone.count || 5;
+              const total  = activeActivities.length;
+              return (
+                <MilestoneCard
+                  icon="☀️"
+                  label={`Log ${target} habits today`}
+                  reward={rewardMilestone.reward}
+                  enabled={rewardMilestone.enabled}
+                  progress={{ current: todayLoggedCount, target, label: `${todayLoggedCount}/${target} today` }}
+                  onToggle={() => setRewardMilestone({ enabled: !rewardMilestone.enabled })}
+                  onEdit={() => setMilestoneModal({ mode: 'edit', type: 'daily', count: String(target), reward: rewardMilestone.reward || '', habits: [], days: '', streakId: null })}
+                  onDelete={() => setRewardMilestone({ enabled: false, dailyCreated: false })}
+                  theme={theme}
                 />
-                <span className={`text-xs whitespace-nowrap ${theme.muted}`}>habits today to unlock:</span>
-              </div>
-              <input
-                type="text"
-                value={milestoneReward}
-                onChange={e => setMilestoneReward(e.target.value)}
-                placeholder="Your reward (e.g. Netflix episode…)"
-                className={`w-full text-sm px-3 py-2 rounded-lg border outline-none mb-2 ${theme.input}`}
+              );
+            })()}
+
+            {/* Weekly milestone card — show if habits selected, even when toggled off */}
+            {(rewardMilestone?.weeklyEnabled || (rewardMilestone?.weeklyHabits || []).length > 0) && (() => {
+              const habitIds = rewardMilestone.weeklyHabits || [];
+              const hitCount = habitIds.filter(id => {
+                const act = activeActivities.find(a => a.id === id);
+                if (!act) return false;
+                const wt = weekDays.reduce((s, d) => s + ((logs[id] || {})[d] || 0), 0);
+                return wt >= (act.weeklyTarget || 1);
+              }).length;
+              return (
+                <MilestoneCard
+                  icon="📅"
+                  label={`Weekly: ${habitIds.length} habit${habitIds.length !== 1 ? 's' : ''} hit target`}
+                  reward={rewardMilestone.weeklyReward}
+                  enabled={rewardMilestone.weeklyEnabled}
+                  progress={habitIds.length > 0 ? { current: hitCount, target: habitIds.length, label: `${hitCount}/${habitIds.length} habits` } : null}
+                  onToggle={() => setRewardMilestone({ weeklyEnabled: !rewardMilestone.weeklyEnabled })}
+                  onEdit={() => setMilestoneModal({ mode: 'edit', type: 'weekly', count: '5', reward: rewardMilestone.weeklyReward || '', habits: habitIds, days: '', streakId: null })}
+                  onDelete={() => setRewardMilestone({ weeklyEnabled: false })}
+                  theme={theme}
+                />
+              );
+            })()}
+
+            {/* Consecutive weeks milestone card — show if habits selected, even when toggled off */}
+            {(rewardMilestone?.consecutiveWeeksEnabled || cwHabits.length > 0) && (() => {
+              const target = rewardMilestone.consecutiveWeeksTarget || 4;
+              return (
+                <MilestoneCard
+                  icon="🗓️"
+                  label={`${target} weeks in a row`}
+                  reward={rewardMilestone.consecutiveWeeksReward}
+                  enabled={rewardMilestone.consecutiveWeeksEnabled}
+                  progress={{ current: consecutiveWeeksCount, target, label: `${consecutiveWeeksCount}/${target} wks` }}
+                  onToggle={() => setRewardMilestone({ consecutiveWeeksEnabled: !rewardMilestone.consecutiveWeeksEnabled })}
+                  onEdit={() => setMilestoneModal({ mode: 'edit', type: 'weeks', count: '5', reward: rewardMilestone.consecutiveWeeksReward || '', habits: cwHabits, days: '', weeksTarget: String(target), streakId: null })}
+                  onDelete={() => setRewardMilestone({ consecutiveWeeksEnabled: false })}
+                  theme={theme}
+                />
+              );
+            })()}
+
+            {/* Streak milestone cards — always show if they exist (delete to remove) */}
+            {(rewardMilestone?.streakMilestones || []).map(m => (
+              <MilestoneCard
+                key={m.id}
+                icon="🔥"
+                label={`${m.days} perfect days in a row`}
+                reward={m.reward}
+                enabled={true}
+                progress={{ current: perfectStreak, target: m.days, label: `${perfectStreak}/${m.days} days` }}
+                onToggle={null}
+                onEdit={() => setMilestoneModal({ mode: 'edit', type: 'streak', count: '5', reward: m.reward || '', habits: [], days: String(m.days), streakId: m.id })}
+                onDelete={() => deleteStreakMilestone(m.id)}
+                theme={theme}
               />
-              <button onClick={saveMilestoneConfig} className={`w-full py-1.5 rounded-lg text-xs font-semibold ${theme.btnPrimary}`}>Save</button>
-            </div>
+            ))}
 
-            {/* ── Weekly per-habit targets milestone ── */}
-            <div className={`pt-3 border-t ${theme.divider}`}>
-              <div className="flex items-center justify-between mb-2">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.muted}`}>📅 Weekly Targets</p>
-                <button
-                  onClick={() => setRewardMilestone({ weeklyEnabled: !rewardMilestone?.weeklyEnabled })}
-                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${rewardMilestone?.weeklyEnabled ? theme.toggleOn : theme.toggleOff}`}
-                >
-                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${rewardMilestone?.weeklyEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <p className={`text-[10px] mb-2 ${theme.muted}`}>Pick habits — reward fires when all selected habits hit their weekly targets</p>
+            {/* Empty state */}
+            {activeMilestoneCount === 0 && (
+              <p className={`text-xs text-center py-2 ${theme.muted}`}>No milestones yet — add one below</p>
+            )}
 
-              {/* Habit picker */}
-              <div className="space-y-1 mb-2">
-                {activeActivities.filter(a => a.hasTarget).map(a => {
-                  const selected = (rewardMilestone?.weeklyHabits || []).includes(a.id);
-                  const weekTotal = weekDays.reduce((s, d) => s + ((logs[a.id] || {})[d] || 0), 0);
-                  return (
-                    <button
-                      key={a.id}
-                      onClick={() => {
-                        const current = rewardMilestone?.weeklyHabits || [];
-                        setRewardMilestone({
-                          weeklyHabits: selected
-                            ? current.filter(id => id !== a.id)
-                            : [...current, a.id],
-                        });
-                      }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left border transition-all ${selected ? 'border-blue-400 bg-blue-500/10' : theme.cardBorder + ' ' + theme.card}`}
-                    >
-                      <span className="text-base leading-none">{a.emoji}</span>
-                      <span className={`flex-1 text-xs font-medium ${theme.text}`}>{a.name}</span>
-                      <span className={`text-[10px] font-semibold ${weekTotal >= a.weeklyTarget ? 'text-green-500' : theme.muted}`}>
-                        {weekTotal}/{a.weeklyTarget}/wk
-                      </span>
-                      {selected && <span className="text-blue-500 text-xs">✓</span>}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <input
-                type="text"
-                value={rewardMilestone?.weeklyReward || ''}
-                onChange={e => setRewardMilestone({ weeklyReward: e.target.value })}
-                placeholder="Weekly reward (e.g. Saturday brunch out…)"
-                className={`w-full text-sm px-3 py-2 rounded-lg border outline-none ${theme.input}`}
-              />
-            </div>
-
-            {/* ── Perfect-day streak milestones ── */}
-            <div className={`pt-3 border-t ${theme.divider}`}>
-              <div className="flex items-center justify-between mb-2">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.muted}`}>Perfect Day Streaks 🔥</p>
-                <button
-                  onClick={() => setRewardMilestone({ streakMilestonesEnabled: !rewardMilestone?.streakMilestonesEnabled })}
-                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${rewardMilestone?.streakMilestonesEnabled ? theme.toggleOn : theme.toggleOff}`}
-                >
-                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${rewardMilestone?.streakMilestonesEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <p className={`text-[10px] mb-3 ${theme.muted}`}>Fires when you hit a streak of perfect days (all habits completed)</p>
-
-              {/* Existing streak milestones */}
-              {(rewardMilestone?.streakMilestones || []).map(m => (
-                <div key={m.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg mb-1.5 ${theme.progressBg}`}>
-                  <span className="text-sm">🔥</span>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-xs font-semibold ${theme.text}`}>{m.days} perfect days</p>
-                    {m.reward && <p className={`text-[10px] truncate ${theme.muted}`}>🎁 {m.reward}</p>}
-                  </div>
-                  <button onClick={() => deleteStreakMilestone(m.id)} className="text-xs px-2 py-1 rounded-lg bg-red-100 text-red-500 font-semibold">Del</button>
-                </div>
-              ))}
-
-              {/* Add new streak milestone */}
-              {addingStreak ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number" min="1"
-                      value={newStreakDays}
-                      onChange={e => setNewStreakDays(e.target.value)}
-                      placeholder="Days"
-                      autoFocus
-                      className={`w-20 text-sm text-center px-2 py-1.5 rounded-lg border outline-none ${theme.input}`}
-                    />
-                    <span className={`text-xs ${theme.muted}`}>perfect days</span>
-                  </div>
-                  <input
-                    type="text"
-                    value={newStreakReward}
-                    onChange={e => setNewStreakReward(e.target.value)}
-                    placeholder="Reward (e.g. 30 days = weekend away…)"
-                    className={`w-full text-sm px-3 py-1.5 rounded-lg border outline-none ${theme.input}`}
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={addStreakMilestone} disabled={!newStreakDays} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40 ${theme.btnPrimary}`}>Add</button>
-                    <button onClick={() => { setAddingStreak(false); setNewStreakDays(''); setNewStreakReward(''); }} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${theme.btnSecondary}`}>Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <button onClick={() => setAddingStreak(true)} className={`w-full py-2 rounded-lg text-xs font-semibold ${theme.btnSecondary}`}>
-                  + Add streak milestone
-                </button>
-              )}
-            </div>
-
+            {/* Add button */}
+            <button
+              onClick={() => setMilestoneModal({ mode: 'add', type: 'daily', count: '5', reward: '', habits: [], days: '', streakId: null })}
+              className={`w-full py-2 rounded-xl text-xs font-semibold ${theme.btnSecondary}`}
+            >+ Add Milestone</button>
           </div>
         )}
       </div>
+
+      {/* ── Add / Edit Milestone modal ── */}
+      {milestoneModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className={`w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden ${theme.card} ${theme.cardBorder} border`}>
+            {/* Modal header */}
+            <div className={`px-4 pt-4 pb-3 border-b ${theme.divider}`}>
+              <h2 className={`text-sm font-bold ${theme.text}`}>
+                {milestoneModal.mode === 'add' ? 'Add Milestone' : 'Edit Milestone'}
+              </h2>
+            </div>
+
+            <div className="px-4 py-3 space-y-4">
+              {/* Type selector (add mode only) */}
+              {milestoneModal.mode === 'add' && (
+                <div>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Type</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { type: 'daily',  icon: '☀️',  label: 'Daily'       },
+                      { type: 'weekly', icon: '📅',  label: 'Weekly'      },
+                      { type: 'weeks',  icon: '🗓️', label: 'Wk Streak'   },
+                      { type: 'streak', icon: '🔥',  label: 'Day Streak'  },
+                    ].map(opt => (
+                      <button
+                        key={opt.type}
+                        onClick={() => setMilestoneModal(m => ({ ...m, type: opt.type }))}
+                        className={`py-2.5 rounded-xl text-xs font-semibold flex flex-col items-center gap-0.5 transition-all ${milestoneModal.type === opt.type ? theme.btnPrimary : theme.btnSecondary}`}
+                      >
+                        <span className="text-lg">{opt.icon}</span>
+                        <span>{opt.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Config: Daily */}
+              {milestoneModal.type === 'daily' && (
+                <div>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Target</p>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs whitespace-nowrap ${theme.muted}`}>Log</span>
+                    <input
+                      type="number" min="1" max="50"
+                      value={milestoneModal.count}
+                      onChange={e => setMilestoneModal(m => ({ ...m, count: e.target.value }))}
+                      className={`w-14 text-sm text-center px-2 py-1.5 rounded-lg border outline-none ${theme.input}`}
+                    />
+                    <span className={`text-xs whitespace-nowrap ${theme.muted}`}>habits today</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Config: Weekly */}
+              {milestoneModal.type === 'weekly' && (
+                <div>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Habits to watch</p>
+                  <div className="space-y-1 max-h-44 overflow-y-auto">
+                    {activeActivities.filter(a => a.hasTarget).map(a => {
+                      const sel = (milestoneModal.habits || []).includes(a.id);
+                      return (
+                        <button
+                          key={a.id}
+                          onClick={() => setMilestoneModal(m => ({
+                            ...m,
+                            habits: sel ? m.habits.filter(id => id !== a.id) : [...(m.habits || []), a.id],
+                          }))}
+                          className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left border transition-all ${sel ? 'border-blue-400 bg-blue-500/10' : theme.cardBorder + ' ' + theme.progressBg}`}
+                        >
+                          <span className="text-sm">{a.emoji}</span>
+                          <span className={`flex-1 text-xs font-medium ${theme.text}`}>{a.name}</span>
+                          {sel && <span className="text-blue-500 text-xs font-bold">✓</span>}
+                        </button>
+                      );
+                    })}
+                    {activeActivities.filter(a => a.hasTarget).length === 0 && (
+                      <p className={`text-xs text-center py-2 ${theme.muted}`}>No habits with weekly targets yet</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Config: Consecutive Weeks */}
+              {milestoneModal.type === 'weeks' && (
+                <div className="space-y-3">
+                  <div>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Habits to watch</p>
+                    <div className="space-y-1 max-h-36 overflow-y-auto">
+                      {activeActivities.filter(a => a.hasTarget).map(a => {
+                        const sel = (milestoneModal.habits || []).includes(a.id);
+                        return (
+                          <button
+                            key={a.id}
+                            onClick={() => setMilestoneModal(m => ({
+                              ...m,
+                              habits: sel ? m.habits.filter(id => id !== a.id) : [...(m.habits || []), a.id],
+                            }))}
+                            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left border transition-all ${sel ? 'border-blue-400 bg-blue-500/10' : theme.cardBorder + ' ' + theme.progressBg}`}
+                          >
+                            <span className="text-sm">{a.emoji}</span>
+                            <span className={`flex-1 text-xs font-medium ${theme.text}`}>{a.name}</span>
+                            {sel && <span className="text-blue-500 text-xs font-bold">✓</span>}
+                          </button>
+                        );
+                      })}
+                      {activeActivities.filter(a => a.hasTarget).length === 0 && (
+                        <p className={`text-xs text-center py-2 ${theme.muted}`}>No habits with weekly targets yet</p>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Consecutive weeks target</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min="2" max="52"
+                        value={milestoneModal.weeksTarget ?? 4}
+                        onChange={e => setMilestoneModal(m => ({ ...m, weeksTarget: e.target.value }))}
+                        className={`w-14 text-sm text-center px-2 py-1.5 rounded-lg border outline-none ${theme.input}`}
+                      />
+                      <span className={`text-xs ${theme.muted}`}>weeks in a row hitting all targets</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Config: Streak */}
+              {milestoneModal.type === 'streak' && (
+                <div>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Target</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" min="1"
+                      value={milestoneModal.days}
+                      onChange={e => setMilestoneModal(m => ({ ...m, days: e.target.value }))}
+                      placeholder="e.g. 7"
+                      autoFocus={milestoneModal.mode === 'add'}
+                      className={`w-20 text-sm text-center px-2 py-1.5 rounded-lg border outline-none ${theme.input}`}
+                    />
+                    <span className={`text-xs whitespace-nowrap ${theme.muted}`}>consecutive perfect days</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Reward */}
+              <div>
+                <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Your reward</p>
+                <input
+                  type="text"
+                  value={milestoneModal.reward}
+                  onChange={e => setMilestoneModal(m => ({ ...m, reward: e.target.value }))}
+                  placeholder={
+                    milestoneModal.type === 'daily'  ? 'e.g. Netflix episode…' :
+                    milestoneModal.type === 'weekly' ? 'e.g. Saturday brunch out…' :
+                    milestoneModal.type === 'weeks'  ? 'e.g. New gear, massage…' :
+                                                       'e.g. Weekend away…'
+                  }
+                  className={`w-full text-sm px-3 py-2 rounded-lg border outline-none ${theme.input}`}
+                />
+              </div>
+
+              {/* Save / Cancel */}
+              <div className="flex gap-2 pb-1">
+                <button
+                  onClick={saveMilestoneModal}
+                  disabled={
+                    (milestoneModal.type === 'daily'  && !milestoneModal.count) ||
+                    (milestoneModal.type === 'weekly' && !(milestoneModal.habits || []).length) ||
+                    (milestoneModal.type === 'weeks'  && !(milestoneModal.habits || []).length) ||
+                    (milestoneModal.type === 'streak' && !milestoneModal.days)
+                  }
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold disabled:opacity-40 ${theme.btnPrimary}`}
+                >Save</button>
+                <button onClick={() => setMilestoneModal(null)} className={`flex-1 py-2.5 rounded-xl text-xs font-bold ${theme.btnSecondary}`}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {addingNew && (
         <AddHabitForm allTags={tags} theme={theme} onSave={form => { addActivity(form); setAddingNew(false); }} onCancel={() => setAddingNew(false)} />

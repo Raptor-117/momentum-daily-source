@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, Component } from 'react';
 import { useStore } from '../store';
 import {
   todayStr, toDateStr, getWeekStart, getWeekDays, getCalendarMonthChunks,
@@ -354,14 +354,35 @@ function JournalLogEntry({ displayDate, prompts, dayEntries, theme }) {
   );
 }
 
+// ─── Error boundary ───────────────────────────────────────────────────────────
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">
+          <p className="font-bold mb-1">Something went wrong loading this tab:</p>
+          <p className="font-mono break-all">{this.state.error.message}</p>
+          <p className="mt-2 text-red-500">Screenshot this and share it to get it fixed.</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── Logs view ────────────────────────────────────────────────────────────────
 function LogsView({ theme, gamify }) {
-  const { checkIns, journalEntries, journalPrompts } = useStore();
+  const { checkIns, journalEntries, journalPrompts, customEmotions } = useStore();
+  const EMOTION_EMOJI = buildEmotionMap(customEmotions);
   const [subTab, setSubTab] = useState('checkins');
 
-  const ciDates = Object.keys(checkIns).sort((a, b) => b.localeCompare(a));
+  const ciDates = Object.keys(checkIns)
+    .filter(d => checkIns[d] && Array.isArray(checkIns[d].emotions))
+    .sort((a, b) => b.localeCompare(a));
   const jeDates = Object.keys(journalEntries)
-    .filter(d => Object.values(journalEntries[d]).some(v => v?.trim()))
+    .filter(d => journalEntries[d] && typeof journalEntries[d] === 'object' && Object.values(journalEntries[d]).some(v => v?.trim()))
     .sort((a, b) => b.localeCompare(a));
 
   function formatDate(d) {
@@ -376,7 +397,7 @@ function LogsView({ theme, gamify }) {
       const ci = checkIns[d];
       rows.push([
         d,
-        ci.emotions.map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(', '),
+        (ci.emotions || []).map(e => e.charAt(0).toUpperCase() + e.slice(1)).join(', '),
         ci.notes || '',
       ]);
     });
@@ -425,7 +446,7 @@ function LogsView({ theme, gamify }) {
                   <div key={d} className={`rounded-xl p-3 border ${theme.card} ${theme.cardBorder}`}>
                     <p className={`text-xs font-semibold mb-1.5 ${theme.textSub}`}>{formatDate(d)}</p>
                     <div className="flex flex-wrap gap-1 mb-1.5">
-                      {ci.emotions.map(id => (
+                      {(ci.emotions || []).map(id => (
                         <span key={id} className={`text-xs px-2 py-0.5 rounded-full ${theme.progressBg} ${theme.textSub}`}>
                           {EMOTION_EMOJI[id]} {id.charAt(0).toUpperCase() + id.slice(1)}
                         </span>
@@ -461,7 +482,7 @@ function LogsView({ theme, gamify }) {
           ) : (
             <div className="space-y-2 mb-3">
               {jeDates.map(d => {
-                const dayEntries = journalEntries[d];
+                const dayEntries = journalEntries[d] || {};
                 const answered   = journalPrompts.filter(p => (dayEntries[p.id] || '').trim());
                 return (
                   <JournalLogEntry
@@ -487,14 +508,31 @@ function LogsView({ theme, gamify }) {
 }
 
 // ─── Stats tables ─────────────────────────────────────────────────────────────
+function offsetDateStr(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function getWeekOfYear(dateStr) {
+  const d    = new Date(dateStr + 'T00:00:00');
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  return Math.floor(((d - jan1) / 86400000 + jan1.getDay()) / 7) + 1;
+}
+
 function StatsView({ theme }) {
   const { activities, logs, weekStartDay } = useStore();
   const [period,   setPeriod]   = useState('week');
   const today     = todayStr();
   const todayDate = new Date(today + 'T00:00:00');
   const weekStart = getWeekStart(today, weekStartDay);
-  const weekDays  = getWeekDays(weekStart);
   const dayLabels = getDayLabels(weekStartDay);
+
+  const [viewWeekStart, setViewWeekStart] = useState(weekStart);
+  const isCurrentWeek = viewWeekStart === weekStart;
+  const viewWeekDays  = getWeekDays(viewWeekStart);
+  const weekNum       = getWeekOfYear(viewWeekStart);
+  const weekYear      = new Date(viewWeekStart + 'T00:00:00').getFullYear();
 
   const [mDate,    setMDate]    = useState({ year: todayDate.getFullYear(), month: todayDate.getMonth() });
   const [viewYear, setViewYear] = useState(todayDate.getFullYear());
@@ -505,44 +543,65 @@ function StatsView({ theme }) {
   // ── Week ──
   function WeekTable() {
     return (
-      <div className="overflow-x-auto -mx-1">
-        <table className="w-full text-xs min-w-[300px]">
-          <thead>
-            <tr>
-              <th className={`text-left font-semibold py-2 pr-2 sticky left-0 min-w-[95px] ${theme.card} ${theme.textSub}`}>Activity</th>
-              {dayLabels.map((d, i) => {
-                const isToday = weekDays[i] === today;
+      <div>
+        {/* Week navigator */}
+        <div className="flex items-center justify-between mb-3">
+          <button
+            onClick={() => setViewWeekStart(w => offsetDateStr(w, -7))}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}
+          >◀</button>
+          <div className="text-center">
+            <span className={`text-sm font-bold ${isCurrentWeek ? theme.tabActiveText : theme.text}`}>
+              {isCurrentWeek ? 'This Week' : `Wk ${weekNum}, ${weekYear}`}
+            </span>
+            <p className={`text-[10px] mt-0.5 ${theme.muted}`}>Week {weekNum} of {weekYear}</p>
+          </div>
+          <button
+            onClick={() => setViewWeekStart(w => offsetDateStr(w, 7))}
+            disabled={isCurrentWeek}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base disabled:opacity-30 ${theme.btnSecondary}`}
+          >▶</button>
+        </div>
+
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-xs min-w-[300px]">
+            <thead>
+              <tr>
+                <th className={`text-left font-semibold py-2 pr-2 sticky left-0 min-w-[95px] ${theme.card} ${theme.textSub}`}>Activity</th>
+                {dayLabels.map((d, i) => {
+                  const isToday = viewWeekDays[i] === today;
+                  return (
+                    <th key={d} className={`text-center font-semibold py-2 px-1 min-w-[30px] ${isToday ? theme.tabActiveText : theme.muted}`}>
+                      <div>{d}</div>
+                      <div className={`font-normal ${theme.muted}`}>{new Date(viewWeekDays[i]+'T00:00:00').getDate()}</div>
+                    </th>
+                  );
+                })}
+                <th className={`text-center font-bold py-2 px-1 min-w-[36px] ${theme.tabActiveText}`}>Tot</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activities.map(a => {
+                const dayCounts = viewWeekDays.map(d => getCount(a.id, d));
+                const total     = dayCounts.reduce((s, v) => s + v, 0);
+                const hit       = a.hasTarget && total >= a.weeklyTarget;
                 return (
-                  <th key={d} className={`text-center font-semibold py-2 px-1 min-w-[30px] ${isToday ? theme.tabActiveText : theme.muted}`}>
-                    <div>{d}</div>
-                    <div className={`font-normal ${theme.muted}`}>{new Date(weekDays[i]+'T00:00:00').getDate()}</div>
-                  </th>
+                  <tr key={a.id} className={`border-t ${theme.divider}`}>
+                    <td className={`py-2 pr-2 font-medium sticky left-0 leading-tight ${theme.card} ${theme.textSub}`}>{a.name}</td>
+                    {dayCounts.map((c, i) => (
+                      <td key={i} className="text-center py-2 px-1">
+                        <span className={c > 0 ? theme.tabActiveText + ' font-bold' : theme.muted}>{c || '–'}</span>
+                      </td>
+                    ))}
+                    <td className={`text-center py-2 px-1 font-bold ${hit ? theme.hitTarget : total > 0 ? theme.text : theme.muted}`}>
+                      {total || '–'}{hit ? '✓' : ''}
+                    </td>
+                  </tr>
                 );
               })}
-              <th className={`text-center font-bold py-2 px-1 min-w-[36px] ${theme.tabActiveText}`}>Tot</th>
-            </tr>
-          </thead>
-          <tbody>
-            {activities.map(a => {
-              const dayCounts = weekDays.map(d => getCount(a.id, d));
-              const total     = dayCounts.reduce((s, v) => s + v, 0);
-              const hit       = a.hasTarget && total >= a.weeklyTarget;
-              return (
-                <tr key={a.id} className={`border-t ${theme.divider}`}>
-                  <td className={`py-2 pr-2 font-medium sticky left-0 leading-tight ${theme.card} ${theme.textSub}`}>{a.name}</td>
-                  {dayCounts.map((c, i) => (
-                    <td key={i} className="text-center py-2 px-1">
-                      <span className={c > 0 ? theme.tabActiveText + ' font-bold' : theme.muted}>{c || '–'}</span>
-                    </td>
-                  ))}
-                  <td className={`text-center py-2 px-1 font-bold ${hit ? theme.hitTarget : total > 0 ? theme.text : theme.muted}`}>
-                    {total || '–'}{hit ? '✓' : ''}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
@@ -674,7 +733,7 @@ function StatsView({ theme }) {
           {activities.map(a => {
             let avg = '–';
             if (period === 'week') {
-              const total = weekDays.reduce((s, d) => s + getCount(a.id, d), 0);
+              const total = viewWeekDays.reduce((s, d) => s + getCount(a.id, d), 0);
               if (total > 0) avg = (total / 7).toFixed(1);
             } else if (period === 'month') {
               const total = chunks.reduce((s, c) => s + getTotal(a.id, c.days), 0);
@@ -702,18 +761,83 @@ function StatsView({ theme }) {
     );
   }
 
+  // ── Share ──
+  const [shareFeedback, setShareFeedback] = useState('');
+
+  function buildShareText() {
+    if (period === 'week') {
+      const label    = isCurrentWeek ? 'This Week' : `Wk ${weekNum}, ${weekYear}`;
+      const startFmt = new Date(viewWeekDays[0] + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+      const endFmt   = new Date(viewWeekDays[6] + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+      const lines    = [`📊 Momentum Daily — ${label}`, `${startFmt} – ${endFmt}`, ''];
+      activities.forEach(a => {
+        const counts = viewWeekDays.map(d => getCount(a.id, d));
+        const total  = counts.reduce((s, v) => s + v, 0);
+        const hit    = a.hasTarget && total >= a.weeklyTarget;
+        const avg    = total > 0 ? (total / 7).toFixed(1) : '0';
+        lines.push(`${a.emoji || ''} ${a.name}: ${total}${hit ? ' ✓' : ''}  (avg ${avg}/day)`);
+      });
+      return lines.join('\n');
+    }
+    if (period === 'month') {
+      const chunks = getCalendarMonthChunks(mDate.year, mDate.month);
+      const lines  = [`📊 Momentum Daily — ${MONTH_NAMES_FULL[mDate.month]} ${mDate.year}`, ''];
+      activities.forEach(a => {
+        const total = chunks.reduce((s, c) => s + getTotal(a.id, c.days), 0);
+        const avg   = total > 0 ? (total / chunks.length).toFixed(1) : '0';
+        lines.push(`${a.emoji || ''} ${a.name}: ${total}  (avg ${avg}/week)`);
+      });
+      return lines.join('\n');
+    }
+    if (period === 'year') {
+      const currentYear  = todayDate.getFullYear();
+      const monthsElap   = viewYear < currentYear ? 12 : todayDate.getMonth() + 1;
+      const lines        = [`📊 Momentum Daily — ${viewYear}`, ''];
+      activities.forEach(a => {
+        let total = 0;
+        for (let m = 0; m < 12; m++) {
+          const daysInM = new Date(viewYear, m + 1, 0).getDate();
+          for (let d = 1; d <= daysInM; d++) {
+            total += getCount(a.id, `${viewYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+          }
+        }
+        const avg = total > 0 ? (total / monthsElap).toFixed(1) : '0';
+        lines.push(`${a.emoji || ''} ${a.name}: ${total}  (avg ${avg}/month)`);
+      });
+      return lines.join('\n');
+    }
+    return '';
+  }
+
+  async function handleShare() {
+    const text = buildShareText();
+    if (!text) return;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Momentum Daily Stats', text }); } catch (_) { /* cancelled */ }
+    } else {
+      try {
+        await navigator.clipboard.writeText(text);
+        setShareFeedback('Copied!');
+        setTimeout(() => setShareFeedback(''), 2000);
+      } catch (_) {
+        setShareFeedback('Failed');
+        setTimeout(() => setShareFeedback(''), 2000);
+      }
+    }
+  }
+
   // ── Export ──
   function handleExport() {
     if (period === 'week') {
-      const dateRow  = ['Date', ...weekDays.map(d => new Date(d+'T00:00:00').toLocaleDateString('en-AU')), '', ''];
+      const dateRow  = ['Date', ...viewWeekDays.map(d => new Date(d+'T00:00:00').toLocaleDateString('en-AU')), '', ''];
       const labelRow = ['Activity', ...dayLabels, 'TOTAL', 'AVG/DAY'];
       const rows     = [labelRow, dateRow];
       activities.forEach(a => {
-        const counts = weekDays.map(d => getCount(a.id, d));
+        const counts = viewWeekDays.map(d => getCount(a.id, d));
         const total  = counts.reduce((s,v)=>s+v,0);
         rows.push([a.name, ...counts, total, total > 0 ? (total/7).toFixed(1) : 0]);
       });
-      exportCSV(`flow-week-${weekStart}.csv`, rows);
+      exportCSV(`flow-week-${viewWeekStart}.csv`, rows);
     } else if (period === 'month') {
       const chunks  = getCalendarMonthChunks(mDate.year, mDate.month);
       const wLabels = chunks.map(c => `${c.start}-${c.end} ${MONTH_NAMES[mDate.month]}`);
@@ -754,15 +878,23 @@ function StatsView({ theme }) {
       {/* Averages — always visible below table */}
       <AvgSummary />
 
-      {/* Export */}
-      {period !== 'year' && (
+      {/* Export + Share */}
+      <div className="flex gap-2 mt-3">
+        {period !== 'year' && (
+          <button
+            onClick={handleExport}
+            className={`flex-1 py-3 rounded-xl text-sm font-bold active:scale-[0.98] transition-all shadow-sm ${theme.btnSecondary}`}
+          >
+            ↓ Export CSV
+          </button>
+        )}
         <button
-          onClick={handleExport}
-          className={`w-full py-3 rounded-xl text-sm font-bold active:scale-[0.98] transition-all shadow-sm mt-3 ${theme.btnPrimary}`}
+          onClick={handleShare}
+          className={`flex-1 py-3 rounded-xl text-sm font-bold active:scale-[0.98] transition-all shadow-sm ${theme.btnPrimary}`}
         >
-          ↓ Export {period === 'week' ? 'Week' : 'Month'} CSV
+          {shareFeedback || '↗ Share'}
         </button>
-      )}
+      </div>
     </div>
   );
 }
@@ -790,7 +922,7 @@ export default function CalendarStatsScreen({ theme, gamify }) {
 
       {view === 'calendar' && <CalendarView theme={theme} gamify={gamify} />}
       {view === 'stats'    && <StatsView    theme={theme} />}
-      {view === 'logs'     && <LogsView     theme={theme} gamify={gamify} />}
+      {view === 'logs'     && <ErrorBoundary><LogsView theme={theme} gamify={gamify} /></ErrorBoundary>}
     </div>
   );
 }

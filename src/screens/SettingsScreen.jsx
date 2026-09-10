@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor,
   KeyboardSensor, useSensor, useSensors, DragOverlay,
@@ -395,6 +395,140 @@ function parseCSV(text) {
   return { headers, rows };
 }
 
+// ─── Backup & Restore ─────────────────────────────────────────────────────────
+function BackupRestoreSection({ theme }) {
+  const [restoreOpen,    setRestoreOpen]    = useState(false);
+  const [restoreText,    setRestoreText]    = useState('');
+  const [confirmRestore, setConfirmRestore] = useState(false);
+  const [restoreError,   setRestoreError]   = useState('');
+  const [backupDone,     setBackupDone]     = useState(false);
+
+  async function handleBackup() {
+    const data = localStorage.getItem('flow-realm-storage');
+    if (!data) return;
+    const today    = new Date().toISOString().slice(0, 10);
+    const filename = `momentum-backup-${today}.json`;
+    const file     = new File([data], filename, { type: 'application/json' });
+
+    // Mobile: try native share sheet with a .json file attachment
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Momentum Daily Backup' });
+        setBackupDone(true);
+        setTimeout(() => setBackupDone(false), 3000);
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return; // user dismissed share sheet
+      }
+    }
+    // Fallback: download as file (desktop / older mobile)
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+    const a   = Object.assign(document.createElement('a'), { href: url, download: filename });
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    setBackupDone(true);
+    setTimeout(() => setBackupDone(false), 3000);
+  }
+
+  function handleFileLoad(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { setRestoreText(ev.target.result); setRestoreError(''); setConfirmRestore(false); };
+    reader.readAsText(file);
+  }
+
+  function applyRestore() {
+    try {
+      const parsed = JSON.parse(restoreText.trim());
+      const hasActivities = parsed.activities || parsed.state?.activities;
+      if (typeof parsed !== 'object' || !hasActivities) {
+        setRestoreError("Doesn't look like a valid Momentum backup — check you copied the full text.");
+        return;
+      }
+      localStorage.setItem('flow-realm-storage', restoreText.trim());
+      window.location.reload();
+    } catch {
+      setRestoreError('Invalid JSON — make sure you pasted the complete backup text.');
+    }
+  }
+
+  return (
+    <div className="mb-6">
+      <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>Backup & Restore</p>
+      <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
+
+        {/* Backup row */}
+        <div className="flex items-center justify-between px-3 py-3">
+          <div className="flex-1 min-w-0 pr-3">
+            <p className={`text-sm font-medium ${theme.text}`}>Backup my data</p>
+            <p className={`text-xs ${theme.muted}`}>Share or save all habits, logs & history as a .json file</p>
+          </div>
+          <button
+            onClick={handleBackup}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 transition-all ${backupDone ? 'bg-green-500 text-white' : theme.btnPrimary}`}
+          >{backupDone ? '✓ Done' : 'Backup ↑'}</button>
+        </div>
+
+        {/* Restore row */}
+        <div className={`border-t ${theme.divider}`}>
+          <div className="flex items-center justify-between px-3 py-3">
+            <div className="flex-1 min-w-0 pr-3">
+              <p className={`text-sm font-medium ${theme.text}`}>Restore from backup</p>
+              <p className={`text-xs ${theme.muted}`}>Load a backup file or paste JSON — replaces all current data</p>
+            </div>
+            <button
+              onClick={() => { setRestoreOpen(o => !o); setConfirmRestore(false); setRestoreError(''); setRestoreText(''); }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 transition-all ${restoreOpen ? theme.btnPrimary : theme.btnSecondary}`}
+            >{restoreOpen ? 'Cancel' : 'Restore'}</button>
+          </div>
+
+          {restoreOpen && (
+            <div className={`border-t px-3 pb-3 pt-2 space-y-2 ${theme.divider}`}>
+              {/* File picker */}
+              <label className={`flex items-center gap-2 px-3 py-2.5 rounded-xl cursor-pointer ${theme.progressBg}`}>
+                <span className="text-base">📁</span>
+                <span className={`text-xs font-medium flex-1 ${theme.text}`}>Load from file</span>
+                <input type="file" accept=".json,application/json,text/plain" className="hidden" onChange={handleFileLoad} />
+                <span className={`text-xs font-semibold ${theme.muted}`}>Choose →</span>
+              </label>
+
+              <p className={`text-[10px] text-center font-bold uppercase tracking-widest ${theme.muted}`}>or paste backup text</p>
+              <textarea
+                value={restoreText}
+                onChange={e => { setRestoreText(e.target.value); setRestoreError(''); setConfirmRestore(false); }}
+                placeholder="Paste your backup JSON here…"
+                rows={4}
+                className={`w-full text-xs px-3 py-2 rounded-xl border outline-none resize-none font-mono ${theme.input}`}
+              />
+
+              {restoreError && <p className="text-xs text-red-500 font-medium">{restoreError}</p>}
+
+              {restoreText.trim() && !confirmRestore && (
+                <button
+                  onClick={() => setConfirmRestore(true)}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold ${theme.btnPrimary}`}
+                >Review & Restore →</button>
+              )}
+
+              {confirmRestore && (
+                <div className={`rounded-xl border p-3 space-y-2 ${theme.card} ${theme.cardBorder}`}>
+                  <p className={`text-xs font-semibold ${theme.text}`}>⚠️ This replaces all current data</p>
+                  <p className={`text-xs ${theme.muted}`}>Your habits, logs and history will be overwritten with the backup. This can't be undone.</p>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={applyRestore} className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-red-500 text-white">Yes, Restore Now</button>
+                    <button onClick={() => setConfirmRestore(false)} className={`flex-1 py-2.5 rounded-xl text-xs font-bold ${theme.btnSecondary}`}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Import section ───────────────────────────────────────────────────────────
 function ImportSection({ theme }) {
   const { activities, journalPrompts, importLogs, importCheckIns, importJournalEntries, importWellbeingNotes, importTasks } = useStore();
@@ -684,13 +818,183 @@ function DailyMessageSection({ theme }) {
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
-export default function SettingsScreen({ theme }) {
-  const { darkMode, toggleDarkMode, gamify, toggleGameify, weekStartDay, setWeekStartDay } = useStore();
+export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, onSignOut, onPushToCloud, onPullFromCloud, onDeleteAccount }) {
+  const { darkMode, toggleDarkMode, gamify, toggleGameify, weekStartDay, setWeekStartDay, defaultTab, setDefaultTab } = useStore();
+  const [updateStatus,   setUpdateStatus]   = useState('idle'); // idle | checking | updated | uptodate
+  const [deleteConfirm,  setDeleteConfirm]  = useState(false);
+  const [deleteInput,    setDeleteInput]    = useState('');
+  const [deleting,       setDeleting]       = useState(false);
+  const [dots, setDots] = useState('');
+
+  // Animate dots while checking
+  useEffect(() => {
+    if (updateStatus !== 'checking') { setDots(''); return; }
+    const iv = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 500);
+    return () => clearInterval(iv);
+  }, [updateStatus]);
+
+  async function handleUpdate() {
+    if (!('serviceWorker' in navigator) || updateStatus === 'checking') return;
+    setUpdateStatus('checking');
+
+    function done(status) {
+      setUpdateStatus(status);
+      setTimeout(() => setUpdateStatus('idle'), 3000);
+    }
+
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) { done('uptodate'); return; }
+
+      // Reload when new SW takes control
+      navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
+
+      // If a new SW is already waiting, activate it now
+      if (reg.waiting) { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); return; }
+
+      // Attach listener BEFORE calling reg.update() — update can fire updatefound
+      // synchronously as part of its resolution, so attaching after await misses it
+      let foundUpdate = false;
+      reg.addEventListener('updatefound', () => {
+        foundUpdate = true;
+        const newSW = reg.installing;
+        newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'installed') {
+            if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      });
+
+      await reg.update();
+
+      // After 4s with no update found, report up to date
+      setTimeout(() => { if (!foundUpdate) done('uptodate'); }, 4000);
+    } catch {
+      done('uptodate');
+    }
+  }
 
   return (
     <div className="pb-4">
       <div className="mb-4">
         <h1 className={`text-xl font-bold ${theme.text}`}>Settings</h1>
+      </div>
+
+      {/* ── Account / Sync ── */}
+      <div className="mb-6">
+        <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>Account</p>
+        <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
+          {authUser ? (
+            <>
+              <div className="px-3 py-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={`text-sm font-medium ${theme.text}`}>Signed in</p>
+                    <p className={`text-xs mt-0.5 ${theme.muted}`}>{authUser.email}</p>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">Sync on</span>
+                </div>
+              </div>
+              <div className={`border-t ${theme.divider}`} />
+
+              {/* Push */}
+              <div className={`flex items-center justify-between px-3 py-2.5 border-b ${theme.divider}`}>
+                <div>
+                  <p className={`text-sm font-medium ${theme.text}`}>Push to cloud</p>
+                  <p className={`text-[11px] ${theme.muted}`}>Upload local data → overwrite cloud</p>
+                </div>
+                <button
+                  onClick={onPushToCloud}
+                  disabled={syncing}
+                  className={`text-sm px-3 py-1.5 rounded-lg border font-medium text-blue-500 disabled:opacity-40 ${theme.cardBorder}`}
+                >
+                  {syncing ? '…' : 'Push'}
+                </button>
+              </div>
+
+              {/* Pull */}
+              <div className={`flex items-center justify-between px-3 py-2.5 border-b ${theme.divider}`}>
+                <div>
+                  <p className={`text-sm font-medium ${theme.text}`}>Pull from cloud</p>
+                  <p className={`text-[11px] ${theme.muted}`}>Download cloud data → overwrite local</p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Replace all local data with cloud data?\n\nUse this when setting up on a new device.')) {
+                      onPullFromCloud();
+                    }
+                  }}
+                  disabled={syncing}
+                  className={`text-sm px-3 py-1.5 rounded-lg border font-medium text-amber-600 disabled:opacity-40 ${theme.cardBorder}`}
+                >
+                  {syncing ? '…' : 'Pull'}
+                </button>
+              </div>
+
+              {/* Sign out */}
+              <button
+                onClick={onSignOut}
+                className={`w-full py-2.5 text-sm font-medium text-red-500 border-b ${theme.divider}`}
+              >
+                Sign out
+              </button>
+
+              {/* Delete account */}
+              {!deleteConfirm ? (
+                <button
+                  onClick={() => { setDeleteConfirm(true); setDeleteInput(''); }}
+                  className="w-full py-2.5 text-sm font-medium text-red-400 opacity-70"
+                >
+                  Delete account & data
+                </button>
+              ) : (
+                <div className="px-3 py-3">
+                  <p className={`text-xs mb-2 font-semibold text-red-500`}>
+                    This permanently deletes all your cloud data and cannot be undone.
+                  </p>
+                  <p className={`text-xs mb-2 ${theme.muted}`}>Type <strong>DELETE</strong> to confirm:</p>
+                  <input
+                    type="text"
+                    value={deleteInput}
+                    onChange={e => setDeleteInput(e.target.value)}
+                    placeholder="DELETE"
+                    className={`w-full px-3 py-2 rounded-xl border text-sm outline-none mb-3 ${theme.input}`}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setDeleteConfirm(false); setDeleteInput(''); }}
+                      className={`flex-1 py-2 rounded-xl text-xs font-semibold ${theme.btnSecondary}`}
+                    >Cancel</button>
+                    <button
+                      disabled={deleting || deleteInput !== 'DELETE'}
+                      onClick={async () => {
+                        setDeleting(true);
+                        await onDeleteAccount?.();
+                        setDeleting(false);
+                        setDeleteConfirm(false);
+                        setDeleteInput('');
+                      }}
+                      className="flex-1 py-2 rounded-xl text-xs font-semibold bg-red-500 text-white disabled:opacity-50"
+                    >{deleting ? 'Deleting…' : 'Yes, delete'}</button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex items-center justify-between px-3 py-3">
+              <div>
+                <p className={`text-sm font-medium ${theme.text}`}>Sync across devices</p>
+                <p className={`text-xs mt-0.5 ${theme.muted}`}>Sign in to keep your data in sync</p>
+              </div>
+              <button
+                onClick={onShowAuth}
+                className="text-sm px-3 py-1.5 rounded-lg bg-blue-500 text-white font-medium"
+              >
+                Sign in
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Appearance ── */}
@@ -715,9 +1019,9 @@ export default function SettingsScreen({ theme }) {
         </div>
       </div>
 
-      {/* ── Week ── */}
+      {/* ── Week & Defaults ── */}
       <div className="mb-6">
-        <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>Week</p>
+        <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>Week & Defaults</p>
         <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
           <div className="flex items-center justify-between px-3 py-3">
             <p className={`text-sm font-medium ${theme.text}`}>First day of the week</p>
@@ -729,6 +1033,20 @@ export default function SettingsScreen({ theme }) {
               {WEEK_START_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
+            </select>
+          </div>
+          <div className={`border-t ${theme.divider}`} />
+          <div className="flex items-center justify-between px-3 py-3">
+            <p className={`text-sm font-medium ${theme.text}`}>Default screen</p>
+            <select
+              value={defaultTab || 'habits'}
+              onChange={e => setDefaultTab(e.target.value)}
+              className={`text-sm px-3 py-1.5 rounded-lg border outline-none ${theme.select}`}
+            >
+              <option value="habits">Habits</option>
+              <option value="tasks">Tasks</option>
+              <option value="calendar">Calendar</option>
+              <option value="wellbeing">Wellbeing</option>
             </select>
           </div>
         </div>
@@ -743,8 +1061,37 @@ export default function SettingsScreen({ theme }) {
       {/* ── Reminders ── */}
       <RemindersSection theme={theme} />
 
+      {/* ── Backup & Restore ── */}
+      <BackupRestoreSection theme={theme} />
+
       {/* ── Import ── */}
       <ImportSection theme={theme} />
+
+      {/* ── App Update ── */}
+      <div className="mb-6">
+        <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>App</p>
+        <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
+          <div className="flex items-center justify-between px-3 py-3">
+            <div>
+              <p className={`text-sm font-medium ${theme.text}`}>Check for update</p>
+              <p className={`text-xs ${theme.muted}`}>Your data and settings are preserved</p>
+            </div>
+            <button
+              onClick={handleUpdate}
+              disabled={updateStatus === 'checking'}
+              className={`text-sm px-4 py-1.5 rounded-lg border font-medium transition-colors ${theme.btnSecondary} disabled:opacity-50`}
+            >
+              {updateStatus === 'checking' ? `Checking${dots}` : updateStatus === 'updated' ? '✓ Updated!' : updateStatus === 'uptodate' ? '✓ Up to date' : 'Update'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Version ── */}
+      <div className="mt-6 text-center">
+        <p className={`text-xs ${theme.muted}`}>Momentum Daily</p>
+        <p className={`text-xs font-mono mt-0.5 ${theme.muted}`}>built {new Date(__BUILD_TIME__).toLocaleString()}</p>
+      </div>
 
     </div>
   );

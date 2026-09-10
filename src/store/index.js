@@ -12,6 +12,7 @@ const DEFAULT_JOURNAL_PROMPTS = [
   { id: 'jp-4', text: 'Did I honour my intention today?' },
   { id: 'jp-5', text: 'Did today feel like a win? Why or why not?' },
   { id: 'jp-6', text: 'What challenged me today, and what did it teach me?' },
+  { id: 'jp-tomorrow', text: "What's on your agenda for tomorrow?" },
 ];
 
 export const useStore = create(
@@ -28,6 +29,9 @@ export const useStore = create(
       // 0=Sun, 1=Mon, 6=Sat
       weekStartDay: 6,
       setWeekStartDay: (day) => set(() => ({ weekStartDay: day })),
+
+      defaultTab: 'habits',
+      setDefaultTab: (tab) => set(() => ({ defaultTab: tab })),
 
       // ── ACTIVITIES ──────────────────────────────────────────────────────
       activities: DEFAULT_ACTIVITIES.map(a => ({ ...a })),
@@ -186,28 +190,57 @@ export const useStore = create(
         tasks: s.tasks.filter(t => t.id !== id),
       })),
 
-      // Recurring tasks: check effective completion state based on recurrence period
+      // Recurring tasks: never disappear — tick advances the due date and stays visible
       toggleTask: (id) => set((s) => {
         const today = new Date().toISOString().slice(0, 10);
+
+        function shiftDate(recurrence, from, direction) {
+          if (!from) return null;
+          const d = new Date(from + 'T00:00:00');
+          if (recurrence === 'daily')   d.setDate(d.getDate() + direction);
+          if (recurrence === 'weekly')  d.setDate(d.getDate() + direction * 7);
+          if (recurrence === 'monthly') d.setMonth(d.getMonth() + direction);
+          return d.toISOString().slice(0, 10);
+        }
+
+        function doneThisPeriod(t) {
+          if (!t.lastCompleted) return false;
+          if (t.recurrence === 'daily')   return t.lastCompleted === today;
+          if (t.recurrence === 'weekly')  return Math.floor((new Date(today+'T00:00:00')-new Date(t.lastCompleted+'T00:00:00'))/86400000) < 7;
+          if (t.recurrence === 'monthly') return t.lastCompleted.slice(0,7) === today.slice(0,7);
+          return false;
+        }
+
         return {
           tasks: s.tasks.map(t => {
             if (t.id !== id) return t;
+
             // Non-recurring: simple toggle
             if (!t.recurrence || t.recurrence === 'none') {
               const nc = !t.completed;
               return { ...t, completed: nc, completedDate: nc ? today : null };
             }
-            // Recurring: determine if currently effective for this period
-            const lc = t.lastCompleted;
-            let effective = false;
-            if (t.completed && lc) {
-              if      (t.recurrence === 'daily')   effective = lc === today;
-              else if (t.recurrence === 'weekly')  effective = Math.floor((new Date(today+'T00:00:00')-new Date(lc+'T00:00:00'))/86400000) < 7;
-              else if (t.recurrence === 'monthly') effective = lc.slice(0,7) === today.slice(0,7);
+
+            // Recurring: tick = mark done this period + advance due date (stays visible in upcoming)
+            //            un-tick = undo — revert due date and clear lastCompleted
+            const alreadyDone = doneThisPeriod(t);
+            if (!alreadyDone) {
+              // Completing: advance due date to next period, record lastCompleted
+              return {
+                ...t,
+                completed: false,           // stays in active list
+                lastCompleted: today,
+                dueDate: shiftDate(t.recurrence, t.dueDate, +1),
+              };
+            } else {
+              // Un-completing: revert due date, clear lastCompleted
+              return {
+                ...t,
+                completed: false,
+                lastCompleted: null,
+                dueDate: shiftDate(t.recurrence, t.dueDate, -1),
+              };
             }
-            // Toggle: complete for this period, or uncomplete
-            const ne = !effective;
-            return { ...t, completed: ne, completedDate: ne ? today : null, lastCompleted: ne ? today : null };
           }),
         };
       }),
@@ -230,15 +263,26 @@ export const useStore = create(
       // streakMilestones: [{id, days, reward}] — fires on perfect-day streak
       rewardMilestone: {
         // Daily count
-        enabled: false, count: 5, reward: '',
+        enabled: false, count: 5, reward: '', dailyCreated: false,
         // Weekly per-habit targets
         weeklyEnabled: false, weeklyHabits: [], weeklyReward: '',
-        // Streak
+        // Streak (perfect days)
         streakMilestones: [], streakMilestonesEnabled: false,
+        // Consecutive weeks — hit selected habits' weekly targets N weeks in a row
+        consecutiveWeeksEnabled: false, consecutiveWeeksHabits: [], consecutiveWeeksTarget: 4, consecutiveWeeksReward: '',
       },
 
       setRewardMilestone: (updates) => set((s) => ({
         rewardMilestone: { ...s.rewardMilestone, ...updates },
+      })),
+
+      // ── MILESTONE SEEN TRACKING ───────────────────────────────────────────────
+      // Persisted so resets happen on date/week boundary, not just page reload
+      // { daily: 'YYYY-MM-DD', weekly: 'YYYY-WW', streaks: { [id]: number } }
+      milestoneSeen: { daily: null, weekly: null, streaks: {}, consecutiveWeeks: null },
+
+      setMilestoneSeen: (updates) => set((s) => ({
+        milestoneSeen: { ...s.milestoneSeen, ...updates },
       })),
 
       // ── WELLBEING — CHECK-IN ─────────────────────────────────────────────
@@ -354,6 +398,38 @@ export const useStore = create(
         notifications: s.notifications.filter(n => n.id !== id),
       })),
 
+      // ── UI PREFERENCES (persisted across tab navigation) ─────────────────────
+      // Stores filter + section-collapse state so it survives tab switches
+      uiPrefs: {
+        tasks: {
+          sections: { urgent: true, overdue: true, dueToday: true, next7Days: true, upcoming: true, noDeadline: true, completed: false },
+          filterComplexities: [],
+          filterTags: [],
+          filterOpen: false,
+        },
+        habits: {
+          filterStatuses: [],
+          filterTags: [],
+        },
+      },
+
+      setUiPref: (screen, key, value) => set((s) => ({
+        uiPrefs: {
+          ...s.uiPrefs,
+          [screen]: { ...s.uiPrefs[screen], [key]: value },
+        },
+      })),
+
+      setTaskSection: (sectionKey, isOpen) => set((s) => ({
+        uiPrefs: {
+          ...s.uiPrefs,
+          tasks: {
+            ...s.uiPrefs.tasks,
+            sections: { ...s.uiPrefs.tasks.sections, [sectionKey]: isOpen },
+          },
+        },
+      })),
+
       // ── CSV IMPORT HELPERS ────────────────────────────────────────────────────
       importLogs: (newLogs) => set((s) => {
         const merged = { ...s.logs };
@@ -382,6 +458,10 @@ export const useStore = create(
       importTasks: (newTasks) => set((s) => ({
         tasks: [...s.tasks, ...newTasks],
       })),
+
+      // ── SUPABASE HYDRATION ────────────────────────────────────────────────────
+      // Replaces all data fields with pulled cloud data (called on login)
+      hydrateFromSupabase: (data) => set(() => ({ ...data })),
     }),
     {
       name: 'flow-realm-storage',
@@ -396,6 +476,7 @@ export const useStore = create(
         tasks:          s.tasks,
         customEmotions:  s.customEmotions,
         rewardMilestone: s.rewardMilestone,
+        milestoneSeen:   s.milestoneSeen,
         checkIns:        s.checkIns,
         journalPrompts:  s.journalPrompts,
         journalEntries:  s.journalEntries,
@@ -404,6 +485,7 @@ export const useStore = create(
         dailyDrafts:          s.dailyDrafts,
         dailyMessageDefaults: s.dailyMessageDefaults,
         library:              s.library,
+        uiPrefs:              s.uiPrefs,
       }),
     }
   )
