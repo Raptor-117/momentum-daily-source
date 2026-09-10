@@ -169,11 +169,12 @@ async function pushPreferences(userId, state) {
 }
 
 async function pullPreferences(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('user_preferences')
     .select('*')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
+  if (error) throw error;
   if (!data) return {};
   return {
     darkMode: data.dark_mode,
@@ -231,7 +232,7 @@ async function pullActivities(userId) {
     .select('*')
     .eq('user_id', userId)
     .order('sort_order');
-  if (error) captureError(new Error(error.message), { context: 'pullActivities' });
+  if (error) throw error;
   // Store uses 'name', Supabase column is 'label' — map back correctly
   return (data || []).map(a => ({
     id: a.id,
@@ -270,7 +271,7 @@ async function pullLogs(userId) {
     .from('logs')
     .select('activity_id, log_date, count')
     .eq('user_id', userId);
-  if (error) captureError(new Error(error.message), { context: 'pullLogs' });
+  if (error) throw error;
   const logs = {};
   (data || []).forEach(({ activity_id, log_date, count }) => {
     if (!logs[activity_id]) logs[activity_id] = {};
@@ -311,11 +312,12 @@ async function pushTags(userId, tags) {
 }
 
 async function pullTags(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('tags')
     .select('*')
     .eq('user_id', userId)
     .order('sort_order');
+  if (error) throw error;
   return (data || []).map(t => ({ id: t.id, label: t.label, color: t.color }));
 }
 
@@ -366,10 +368,11 @@ async function pushTasks(userId, tasks) {
 }
 
 async function pullTasks(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('tasks')
     .select('*')
     .eq('user_id', userId);
+  if (error) throw error;
   return (data || []).map(t => ({
     id: t.id,
     title: t.title,
@@ -401,10 +404,11 @@ async function pushCheckIns(userId, checkIns) {
 }
 
 async function pullCheckIns(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('check_ins')
     .select('check_in_date, emotions, notes')
     .eq('user_id', userId);
+  if (error) throw error;
   const checkIns = {};
   (data || []).forEach(({ check_in_date, emotions, notes }) => {
     checkIns[check_in_date] = { emotions: emotions || [], notes: notes || '' };
@@ -428,11 +432,12 @@ async function pushJournalPrompts(userId, prompts) {
 }
 
 async function pullJournalPrompts(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('journal_prompts')
     .select('*')
     .eq('user_id', userId)
     .order('sort_order');
+  if (error) throw error;
   return (data || []).map(p => ({ id: p.id, text: p.text }));
 }
 
@@ -451,10 +456,11 @@ async function pushJournalEntries(userId, entries) {
 }
 
 async function pullJournalEntries(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('journal_entries')
     .select('entry_date, prompt_id, text')
     .eq('user_id', userId);
+  if (error) throw error;
   const entries = {};
   (data || []).forEach(({ entry_date, prompt_id, text }) => {
     if (!entries[entry_date]) entries[entry_date] = {};
@@ -475,10 +481,11 @@ async function pushWellbeingNotes(userId, notes) {
 }
 
 async function pullWellbeingNotes(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('wellbeing_notes')
     .select('note_date, text')
     .eq('user_id', userId);
+  if (error) throw error;
   const notes = {};
   (data || []).forEach(({ note_date, text }) => { notes[note_date] = text; });
   return notes;
@@ -504,10 +511,11 @@ async function pushLibrary(userId, library) {
 }
 
 async function pullLibrary(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('library')
     .select('*')
     .eq('user_id', userId);
+  if (error) throw error;
   return (data || []).map(e => ({
     id: e.id, title: e.title, author: e.author, status: e.status,
     notes: e.notes, dateStarted: e.date_started, dateCompleted: e.date_completed,
@@ -527,10 +535,11 @@ async function pushNotifications(userId, notifications) {
 }
 
 async function pullNotifications(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('notifications')
     .select('*')
     .eq('user_id', userId);
+  if (error) throw error;
   return (data || []).map(n => ({ id: n.id, time: n.time, message: n.message, enabled: n.enabled }));
 }
 
@@ -546,10 +555,11 @@ async function pushDailyDrafts(userId, drafts) {
 }
 
 async function pullDailyDrafts(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('daily_drafts')
     .select('draft_date, book, audio, notes')
     .eq('user_id', userId);
+  if (error) throw error;
   const drafts = {};
   (data || []).forEach(({ draft_date, book, audio, notes }) => {
     drafts[draft_date] = { book, audio, notes };
@@ -567,11 +577,12 @@ async function pushDailyMessageDefaults(userId, defaults) {
 }
 
 async function pullDailyMessageDefaults(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('daily_message_defaults')
     .select('book, notes')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
+  if (error) throw error;
   return data ? { book: data.book, notes: data.notes } : { book: '', notes: '' };
 }
 
@@ -586,10 +597,11 @@ async function pushCustomEmotions(userId, emotions) {
 }
 
 async function pullCustomEmotions(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('custom_emotions')
     .select('*')
     .eq('user_id', userId);
+  if (error) throw error;
   return (data || []).map(e => ({ id: e.id, label: e.label, emoji: e.emoji }));
 }
 
@@ -603,11 +615,12 @@ async function pushRewardMilestones(userId, milestone) {
 }
 
 async function pullRewardMilestones(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('reward_milestones')
     .select('config')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
+  if (error) throw error;
   return data?.config || {};
 }
 
@@ -621,11 +634,12 @@ async function pushMilestoneSeen(userId, seen) {
 }
 
 async function pullMilestoneSeen(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('milestone_seen')
     .select('data')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
+  if (error) throw error;
   return data?.data || { daily: null, weekly: null, streaks: {}, consecutiveWeeks: null };
 }
 
