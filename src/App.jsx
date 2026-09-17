@@ -8,7 +8,7 @@ import WellbeingScreen     from './screens/WellbeingScreen';
 import SettingsScreen      from './screens/SettingsScreen';
 import AuthScreen          from './screens/AuthScreen';
 import { supabase, signOut, getUser, onAuthStateChange, updatePassword } from './lib/supabase';
-import { pullAllData, pushAllData, mergeFromCloud, deleteAllUserData, mergeLogs } from './lib/sync';
+import { pullAllData, pushAllData, mergeFromCloud, deleteAllUserData } from './lib/sync';
 import { captureError } from './lib/errors';
 
 class AppErrorBoundary extends Component {
@@ -84,37 +84,12 @@ export default function App() {
       setAuthUser(user);
 
       if (user && !prev) {
-        // Session restore on app load — just merge silently, no dialog
+        // Session restore on app load — keep local (localStorage) as the source of
+        // truth. Do NOT auto-pull here: the old code unioned cloud + local, which
+        // resurrected locally-deleted tasks and reverted completions on every reopen.
+        // Cloud sync is now deliberate — use the Pull button to overwrite from cloud.
         if (event === 'INITIAL_SESSION') {
           localStorage.setItem('momentumLastUserId', user.id);
-          try {
-            const remote = await pullAllData(user.id);
-            if (remote.activities?.length > 0) {
-              // Cloud is source of truth for arrays (respects deletions).
-              // Only merge logs so check-in counts are never lost.
-              // Preserve local tags if cloud returned empty (e.g. push was failing).
-              const local = useStore.getState();
-              // Merge tasks: cloud wins for conflicts, but keep local-only tasks
-              // (tasks never pushed due to prior RLS failures stay intact)
-              const cloudTaskIds = new Set((remote.tasks || []).map(t => t.id));
-              const localOnlyTasks = (local.tasks || []).filter(t => !cloudTaskIds.has(t.id));
-              const mergedTasks = [...(remote.tasks || []), ...localOnlyTasks];
-
-              // For arrays/objects: if cloud returned empty (push was failing), preserve local
-              hydrateFromSupabase({
-                ...remote,
-                logs: mergeLogs(local.logs, remote.logs),
-                tasks:            mergedTasks,
-                tags:             remote.tags?.length             > 0 ? remote.tags             : local.tags,
-                journalPrompts:   remote.journalPrompts?.length   > 0 ? remote.journalPrompts   : local.journalPrompts,
-                notifications:    remote.notifications?.length    > 0 ? remote.notifications    : local.notifications,
-                customEmotions:   remote.customEmotions?.length   > 0 ? remote.customEmotions   : local.customEmotions,
-                uiPrefs:          remote.uiPrefs                       ? remote.uiPrefs          : local.uiPrefs,
-              });
-            }
-          } catch (err) {
-            captureError(err, { context: 'sessionRestoreSync' });
-          }
           return;
         }
       }
@@ -242,26 +217,9 @@ export default function App() {
     }
   }
 
-  // ── Merge on focus: pick up changes from other devices ───────────────────
-  async function handleMergeFromCloud() {
-    const user = authUserRef.current;
-    if (!user) return;
-    try {
-      const merged = await mergeFromCloud(user.id, useStore.getState());
-      hydrateFromSupabase(merged);
-    } catch (err) {
-      captureError(err, { context: 'backgroundMerge' });
-    }
-  }
-
-  // Listen for the app coming back into view (switching tabs, phone screen-on, etc.)
-  useEffect(() => {
-    function onVisible() {
-      if (document.visibilityState === 'visible') handleMergeFromCloud();
-    }
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-merge-on-focus removed: it used "remote wins" every time the app regained
+  // focus, which reverted just-completed tasks to an older cloud copy and let two
+  // devices fight. Cross-device updates are now deliberate — use the Pull button.
 
   // ── Sign out ──────────────────────────────────────────────────────────────
   async function handleSignOut() {
