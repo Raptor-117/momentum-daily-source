@@ -8,7 +8,17 @@ import * as Sentry from '@sentry/react';
  * @param {object}       ctx   - Extra context (e.g. { context: 'pushActivities', userId })
  */
 export function captureError(err, ctx = {}) {
-  const error = err instanceof Error ? err : new Error(String(err));
+  let error;
+  if (err instanceof Error) {
+    error = err;
+  } else if (err && typeof err === 'object') {
+    // Supabase/PostgREST errors are plain objects ({ message, code, details, hint }),
+    // not Error instances — String(obj) is "[object Object]" and loses everything.
+    error = new Error(err.message || err.error_description || JSON.stringify(err));
+    for (const k of ['code', 'details', 'hint']) if (err[k] != null) ctx = { ...ctx, [k]: err[k] };
+  } else {
+    error = new Error(String(err));
+  }
 
   // Always log to console so dev tools still work
   console.error(`[${ctx.context || 'app'}]`, error.message, ctx);
