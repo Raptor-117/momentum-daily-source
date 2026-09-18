@@ -58,6 +58,7 @@ export default function App() {
 
   const syncTimerRef = useRef(null);
   const authUserRef  = useRef(null);
+  const pushInFlightRef = useRef(false);
 
   // ── Dev tab title ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -163,7 +164,11 @@ export default function App() {
       if (!user) return;
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
       syncTimerRef.current = setTimeout(() => {
-        pushAllData(user.id, state).catch(err => captureError(err, { context: 'backgroundPush' }));
+        syncTimerRef.current = null;      // no longer pending — now in flight
+        pushInFlightRef.current = true;
+        pushAllData(user.id, state)
+          .catch(err => captureError(err, { context: 'backgroundPush' }))
+          .finally(() => { pushInFlightRef.current = false; });
       }, 3000);
     });
     return () => {
@@ -217,9 +222,31 @@ export default function App() {
     }
   }
 
-  // Auto-merge-on-focus removed: it used "remote wins" every time the app regained
-  // focus, which reverted just-completed tasks to an older cloud copy and let two
-  // devices fight. Cross-device updates are now deliberate — use the Pull button.
+  // ── Auto-update on focus: when this device regains focus, pull the cloud so
+  // edits made on another device show up automatically — but ONLY when this device
+  // has no unsaved (pending) or in-flight local changes. That guard means it can
+  // never revert or wipe your own work. It's a clean replace (like the Pull button),
+  // NOT the old "remote wins" merge that reverted completions / resurrected deletes.
+  useEffect(() => {
+    async function onVisible() {
+      if (document.visibilityState !== 'visible') return;
+      const user = authUserRef.current;
+      if (!user || syncTimerRef.current || pushInFlightRef.current) return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const remote = await pullAllData(user.id);
+        // Never wipe local with an empty pull; only replace when cloud actually has data.
+        if (remote.activities?.length > 0 || remote.tasks?.length > 0) {
+          hydrateFromSupabase(remote);
+        }
+      } catch (err) {
+        captureError(err, { context: 'autoPullOnFocus' });
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sign out ──────────────────────────────────────────────────────────────
   async function handleSignOut() {
