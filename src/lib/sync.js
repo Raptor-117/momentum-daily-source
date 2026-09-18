@@ -269,16 +269,24 @@ async function pushLogs(userId, logs) {
 }
 
 async function pullLogs(userId) {
-  const { data, error } = await supabase
-    .from('logs')
-    .select('activity_id, log_date, count')
-    .eq('user_id', userId);
-  if (error) throw error;
   const logs = {};
-  (data || []).forEach(({ activity_id, log_date, count }) => {
-    if (!logs[activity_id]) logs[activity_id] = {};
-    logs[activity_id][log_date] = count;
-  });
+  // Supabase caps a single query at 1000 rows — paginate so multi-year history
+  // (thousands of daily logs) loads fully instead of being silently truncated.
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('logs')
+      .select('activity_id, log_date, count')
+      .eq('user_id', userId)
+      .order('id')
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    (data || []).forEach(({ activity_id, log_date, count }) => {
+      if (!logs[activity_id]) logs[activity_id] = {};
+      logs[activity_id][log_date] = count;
+    });
+    if (!data || data.length < PAGE) break;
+  }
   return logs;
 }
 
