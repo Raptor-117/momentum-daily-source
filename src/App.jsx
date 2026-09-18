@@ -254,7 +254,7 @@ export default function App() {
     document.addEventListener('visibilitychange', onVisible);
     // Also refresh periodically while the app stays focused (so a screen you're
     // watching updates on its own, not only when it regains focus).
-    const pollId = setInterval(autoPullIfIdle, 30000);
+    const pollId = setInterval(autoPullIfIdle, 60000);
     return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(pollId); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
