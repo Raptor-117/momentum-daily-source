@@ -228,24 +228,34 @@ export default function App() {
   // never revert or wipe your own work. It's a clean replace (like the Pull button),
   // NOT the old "remote wins" merge that reverted completions / resurrected deletes.
   useEffect(() => {
-    async function onVisible() {
-      if (document.visibilityState !== 'visible') return;
+    let busy = false;
+    async function autoPullIfIdle() {
+      if (document.visibilityState !== 'visible' || busy) return;
       const user = authUserRef.current;
-      if (!user || syncTimerRef.current || pushInFlightRef.current) return;
+      if (!user || syncTimerRef.current || pushInFlightRef.current) return; // unsaved local edits — skip
+      busy = true;
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
         const remote = await pullAllData(user.id);
+        // Re-check after the (async) fetch: if the user started editing meanwhile, don't clobber it.
+        if (syncTimerRef.current || pushInFlightRef.current) return;
         // Never wipe local with an empty pull; only replace when cloud actually has data.
         if (remote.activities?.length > 0 || remote.tasks?.length > 0) {
           hydrateFromSupabase(remote);
         }
       } catch (err) {
-        captureError(err, { context: 'autoPullOnFocus' });
+        captureError(err, { context: 'autoPull' });
+      } finally {
+        busy = false;
       }
     }
+    function onVisible() { if (document.visibilityState === 'visible') autoPullIfIdle(); }
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    // Also refresh periodically while the app stays focused (so a screen you're
+    // watching updates on its own, not only when it regains focus).
+    const pollId = setInterval(autoPullIfIdle, 30000);
+    return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(pollId); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sign out ──────────────────────────────────────────────────────────────
