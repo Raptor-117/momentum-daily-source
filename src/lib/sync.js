@@ -210,7 +210,7 @@ async function pushActivities(userId, activities) {
       created_at: a.createdAt || '2020-01-01',
       updated_at: new Date().toISOString(),
     }));
-    const { error } = await supabase.from('activities').upsert(payload, { onConflict: 'id' });
+    const { error } = await supabase.from('activities').upsert(payload, { onConflict: 'user_id,id' });
     if (error) captureError(new Error(error.message), { context: 'pushActivities' });
 
     // Delete cloud records that were removed locally
@@ -304,7 +304,7 @@ async function pushTags(userId, tags) {
         color: t.color,
         sort_order: i,
       })),
-      { onConflict: 'id' }
+      { onConflict: 'user_id,id' }
     );
 
     // Delete cloud records that were removed locally
@@ -359,7 +359,7 @@ async function pushTasks(userId, tasks) {
         created_at: t.createdAt || today,
         updated_at: new Date().toISOString(),
       })),
-      { onConflict: 'id' }
+      { onConflict: 'user_id,id' }
     );
     if (error) captureError(new Error(error.message), { context: 'pushTasks' });
 
@@ -437,7 +437,7 @@ async function pushJournalPrompts(userId, prompts) {
       text: p.text,
       sort_order: i,
     })),
-    { onConflict: 'id' }
+    { onConflict: 'user_id,id' }
   );
 }
 
@@ -516,7 +516,7 @@ async function pushLibrary(userId, library) {
       date_started: e.dateStarted || null,
       date_completed: e.dateCompleted || null,
     })),
-    { onConflict: 'id' }
+    { onConflict: 'user_id,id' }
   );
 }
 
@@ -540,7 +540,7 @@ async function pushNotifications(userId, notifications) {
     notifications.map(n => ({
       id: n.id, user_id: userId, time: n.time, message: n.message, enabled: n.enabled,
     })),
-    { onConflict: 'id' }
+    { onConflict: 'user_id,id' }
   );
 }
 
@@ -602,7 +602,7 @@ async function pushCustomEmotions(userId, emotions) {
   if (!emotions?.length) return;
   await supabase.from('custom_emotions').upsert(
     emotions.map(e => ({ id: e.id, user_id: userId, label: e.label, emoji: e.emoji })),
-    { onConflict: 'id' }
+    { onConflict: 'user_id,id' }
   );
 }
 
