@@ -193,6 +193,21 @@ export default function App() {
     }
   }
 
+  // Apply a cloud pull, but never wipe habits/tags/journal-prompts with an EMPTY
+  // cloud set. These share hard-coded default IDs across users; if a user's defaults
+  // collided with another account's IDs they never saved to the cloud, so a plain
+  // replace would erase them locally. Preserve local when the cloud has none.
+  // (The real cure is per-user IDs — see the multi-user PK migration.)
+  function applyPull(remote) {
+    const local = useStore.getState();
+    hydrateFromSupabase({
+      ...remote,
+      activities:     remote.activities?.length     ? remote.activities     : local.activities,
+      tags:           remote.tags?.length           ? remote.tags           : local.tags,
+      journalPrompts: remote.journalPrompts?.length ? remote.journalPrompts : local.journalPrompts,
+    });
+  }
+
   // ── Pull: cloud → local (overwrites local — use on new device setup) ──────
   async function handlePullFromCloud() {
     if (!authUser || syncing) return;
@@ -208,7 +223,7 @@ export default function App() {
       const remoteData = await pullAllData(authUser.id);
       const hasData = remoteData.activities?.length > 0 || remoteData.tasks?.length > 0 || remoteData.tags?.length > 0;
       if (hasData) {
-        hydrateFromSupabase(remoteData);
+        applyPull(remoteData);
         setSyncMsg('✓ Pulled from cloud');
       } else {
         setSyncMsg('No cloud data found');
@@ -242,7 +257,7 @@ export default function App() {
         if (syncTimerRef.current || pushInFlightRef.current) return;
         // Never wipe local with an empty pull; only replace when cloud actually has data.
         if (remote.activities?.length > 0 || remote.tasks?.length > 0) {
-          hydrateFromSupabase(remote);
+          applyPull(remote);
         }
       } catch (err) {
         captureError(err, { context: 'autoPull' });
