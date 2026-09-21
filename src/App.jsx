@@ -85,12 +85,23 @@ export default function App() {
       setAuthUser(user);
 
       if (user && !prev) {
-        // Session restore on app load — keep local (localStorage) as the source of
-        // truth. Do NOT auto-pull here: the old code unioned cloud + local, which
-        // resurrected locally-deleted tasks and reverted completions on every reopen.
-        // Cloud sync is now deliberate — use the Pull button to overwrite from cloud.
+        // Session restore on app load: refresh once from the cloud so a returning
+        // device isn't stale. This is a CLEAN replace (applyPull) — NOT the old union
+        // that resurrected deleted tasks / reverted completions — and it's guarded so
+        // it can't clobber unsaved local edits (fresh load normally has none).
         if (event === 'INITIAL_SESSION') {
           localStorage.setItem('momentumLastUserId', user.id);
+          try {
+            if (!syncTimerRef.current && !pushInFlightRef.current) {
+              const remote = await pullAllData(user.id);
+              if (!syncTimerRef.current && !pushInFlightRef.current &&
+                  (remote.activities?.length > 0 || remote.tasks?.length > 0)) {
+                applyPull(remote);
+              }
+            }
+          } catch (err) {
+            captureError(err, { context: 'initialLoadPull' });
+          }
           return;
         }
       }
