@@ -59,6 +59,7 @@ export default function App() {
   const syncTimerRef = useRef(null);
   const authUserRef  = useRef(null);
   const pushInFlightRef = useRef(false);
+  const applyingRemoteRef = useRef(false); // true while hydrating FROM the cloud (so we don't mark that as a local edit)
 
   // ── Dev tab title ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -91,6 +92,20 @@ export default function App() {
         // it can't clobber unsaved local edits (fresh load normally has none).
         if (event === 'INITIAL_SESSION') {
           localStorage.setItem('momentumLastUserId', user.id);
+          let unpushed = false;
+          try { unpushed = localStorage.getItem('momentum-unpushed') === '1'; } catch { /* ignore */ }
+          if (unpushed) {
+            // Local has edits from a previous session that never reached the cloud
+            // (app closed before the debounced push). PUSH them up — do NOT pull over them.
+            try {
+              await pushAllData(user.id, useStore.getState());
+              try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ }
+            } catch (err) {
+              captureError(err, { context: 'initialLoadPush' });
+            }
+            return;
+          }
+          // Local is clean → safe to refresh from the cloud so a returning device isn't stale.
           try {
             if (!syncTimerRef.current && !pushInFlightRef.current) {
               const remote = await pullAllData(user.id);
@@ -170,14 +185,19 @@ export default function App() {
 
   // ── Background sync: push on every store change (debounced 3s) ────────────
   useEffect(() => {
-    const unsubscribe = useStore.subscribe((state) => {
+    const unsubscribe = useStore.subscribe(() => {
       const user = authUserRef.current;
       if (!user) return;
+      if (applyingRemoteRef.current) return; // change came FROM a cloud pull — don't mark dirty or re-push
+      // Mark local dirty NOW (synchronous, survives an app close before the debounced
+      // push fires) so a later pull can't overwrite work that never reached the cloud.
+      try { localStorage.setItem('momentum-unpushed', '1'); } catch { /* ignore */ }
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
       syncTimerRef.current = setTimeout(() => {
         syncTimerRef.current = null;      // no longer pending — now in flight
         pushInFlightRef.current = true;
-        pushAllData(user.id, state)
+        pushAllData(user.id, useStore.getState())
+          .then(() => { try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ } })
           .catch(err => captureError(err, { context: 'backgroundPush' }))
           .finally(() => { pushInFlightRef.current = false; });
       }, 3000);
@@ -194,6 +214,7 @@ export default function App() {
     setSyncing(true);
     try {
       await pushAllData(userId, useStore.getState());
+      try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ }
       setSyncMsg('✓ Pushed to cloud');
     } catch (err) {
       captureError(err, { context: 'manualPush' });
@@ -211,12 +232,15 @@ export default function App() {
   // (The real cure is per-user IDs — see the multi-user PK migration.)
   function applyPull(remote) {
     const local = useStore.getState();
+    applyingRemoteRef.current = true; // mark: this state change is a cloud pull, not a user edit
     hydrateFromSupabase({
       ...remote,
       activities:     remote.activities?.length     ? remote.activities     : local.activities,
       tags:           remote.tags?.length           ? remote.tags           : local.tags,
       journalPrompts: remote.journalPrompts?.length ? remote.journalPrompts : local.journalPrompts,
     });
+    applyingRemoteRef.current = false;
+    try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ } // local now matches cloud
   }
 
   // ── Pull: cloud → local (overwrites local — use on new device setup) ──────
@@ -259,6 +283,7 @@ export default function App() {
       if (document.visibilityState !== 'visible' || busy) return;
       const user = authUserRef.current;
       if (!user || syncTimerRef.current || pushInFlightRef.current) return; // unsaved local edits — skip
+      try { if (localStorage.getItem('momentum-unpushed') === '1') return; } catch { /* ignore */ } // dirty from a prior session — don't clobber
       busy = true;
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -266,6 +291,7 @@ export default function App() {
         const remote = await pullAllData(user.id);
         // Re-check after the (async) fetch: if the user started editing meanwhile, don't clobber it.
         if (syncTimerRef.current || pushInFlightRef.current) return;
+        try { if (localStorage.getItem('momentum-unpushed') === '1') return; } catch { /* ignore */ }
         // Never wipe local with an empty pull; only replace when cloud actually has data.
         if (remote.activities?.length > 0 || remote.tasks?.length > 0) {
           applyPull(remote);
