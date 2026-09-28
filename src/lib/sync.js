@@ -4,9 +4,22 @@ import { captureError } from './errors';
 // ── Push: write local Zustand state to Supabase ───────────────────────────────
 
 export async function pushAllData(userId, rawState) {
-  // Bail if session is expired or belongs to a different user
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session || session.user.id !== userId) return;
+  // Bail if session is expired or belongs to a different user.
+  // Try a refresh first — a transient/expired token shouldn't silently drop a push.
+  let { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    try { ({ data: { session } } = await supabase.auth.refreshSession()); } catch { /* ignore */ }
+  }
+  if (!session || session.user.id !== userId) {
+    // Was silent before — this is exactly how a push could vanish with no trace.
+    captureError(new Error('pushAllData bailed: no valid session for this user'), {
+      context: 'pushAllData.bail',
+      hasSession: !!session,
+      sessionUser: session?.user?.id ?? null,
+      wantUser: userId,
+    });
+    return;
+  }
 
   const state = rawState;
   await Promise.all([
