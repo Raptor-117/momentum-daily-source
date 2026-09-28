@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { captureError } from './errors';
+import { todayStr } from '../data';
 
 // ── Push: write local Zustand state to Supabase ───────────────────────────────
 
@@ -347,7 +348,7 @@ async function pullTags(userId) {
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 async function pushTasks(userId, tasks) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const valid = (tasks || []).filter(t => {
     if (!t.title || !t.id || typeof t.id !== 'string') return false;
     try { JSON.stringify(t); return true; }

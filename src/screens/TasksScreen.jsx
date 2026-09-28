@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import { todayStr, formatDisplayDate } from '../data';
+import { todayStr, toDateStr, formatDisplayDate } from '../data';
 
 // ─── Export helpers ───────────────────────────────────────────────────────────
 function buildClaudeText(tasks, tags, today) {
@@ -501,7 +501,7 @@ export default function TasksScreen({ theme, gamify }) {
   // Partition — urgent (critical) gets its own top section, excluded from date sections
   const urgent     = active.filter(t => t.complexity === 'critical').sort(sortByDueThenComplexity);
   const nonUrgent  = active.filter(t => t.complexity !== 'critical');
-  const next7End   = (() => { const d = new Date(today + 'T00:00:00'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
+  const next7End   = (() => { const d = new Date(today + 'T00:00:00'); d.setDate(d.getDate() + 7); return toDateStr(d); })();
   const overdue    = nonUrgent.filter(t => t.dueDate && t.dueDate < today).sort(sortByDueThenComplexity);
   const dueToday   = nonUrgent.filter(t => t.dueDate === today).sort(sortByDueThenComplexity);
   const next7Days  = nonUrgent.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= next7End).sort(sortByDueThenComplexity);

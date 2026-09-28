@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
+import { todayStr } from '../data';
 
 // ─── Tag colour presets ───────────────────────────────────────────────────────
 const PRESET_COLORS = [
@@ -406,7 +407,7 @@ function BackupRestoreSection({ theme }) {
   async function handleBackup() {
     const data = localStorage.getItem('flow-realm-storage');
     if (!data) return;
-    const today    = new Date().toISOString().slice(0, 10);
+    const today    = todayStr();
     const filename = `momentum-backup-${today}.json`;
     const file     = new File([data], filename, { type: 'application/json' });
 
@@ -651,7 +652,7 @@ function ImportSection({ theme }) {
         complexity: row['complexity'] || row['Complexity'] || 'medium',
         tags:       [],
         completed:  (row['completed'] || '').toLowerCase() === 'true',
-        createdAt:  new Date().toISOString().slice(0, 10),
+        createdAt:  todayStr(),
       })).filter(t => t.title);
       importTasks(newTasks);
       setResult('tasks', `✓ ${newTasks.length} tasks imported`);
@@ -670,18 +671,18 @@ function ImportSection({ theme }) {
 
   function habitTemplate() {
     const cols   = ['date', ...activities.map(a => a.name)];
-    const today  = new Date().toISOString().slice(0, 10);
+    const today  = todayStr();
     const zeroes = activities.map(() => '0').join(',');
     return `${cols.join(',')}\n${today},${zeroes}\n`;
   }
 
   function checkInTemplate() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     return `date,emotions,notes\n${today},calm|grateful,Felt good today\n`;
   }
 
   function journalTemplate() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     const rows = journalPrompts.map(p =>
       `${today},"${p.text}","Your answer here"`
     ).join('\n');
@@ -689,7 +690,7 @@ function ImportSection({ theme }) {
   }
 
   function notesTemplate() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     return `date,note\n${today},Your note here\n`;
   }
 

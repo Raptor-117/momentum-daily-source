@@ -825,7 +825,7 @@ function LibraryCard({ entry, theme, editingId, setEditingId, confirmDelId, setC
     updateLibraryEntry(entry.id, {
       title, author, notes, status,
       dateCompleted: status === 'completed' && !entry.dateCompleted
-        ? new Date().toISOString().slice(0, 10)
+        ? todayStr()
         : (status === 'reading' ? null : entry.dateCompleted),
     });
     setSavedFlash(true);

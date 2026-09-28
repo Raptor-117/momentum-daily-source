@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   DEFAULT_ACTIVITIES, DEFAULT_TAGS, MOCK_TASKS, MOCK_LOGS,
-  getWeekDays, calcStreak,
+  getWeekDays, calcStreak, todayStr, toDateStr,
 } from '../data';
 
 const DEFAULT_JOURNAL_PROMPTS = [
@@ -44,7 +44,7 @@ export const useStore = create(
           hasTarget: true,
           tags: [],
           notes: '',
-          createdAt: new Date().toISOString().slice(0, 10),
+          createdAt: todayStr(),
           ...activity,
         }],
       })),
@@ -177,7 +177,7 @@ export const useStore = create(
           recurrence: 'none',
           lastCompleted: null,
           completedDate: null,
-          createdAt: new Date().toISOString().slice(0, 10),
+          createdAt: todayStr(),
           ...task,
         }],
       })),
@@ -192,7 +192,7 @@ export const useStore = create(
 
       // Recurring tasks: never disappear — tick advances the due date and stays visible
       toggleTask: (id) => set((s) => {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayStr();
 
         function shiftDate(recurrence, from, direction) {
           if (!from) return null;
@@ -200,7 +200,7 @@ export const useStore = create(
           if (recurrence === 'daily')   d.setDate(d.getDate() + direction);
           if (recurrence === 'weekly')  d.setDate(d.getDate() + direction * 7);
           if (recurrence === 'monthly') d.setMonth(d.getMonth() + direction);
-          return d.toISOString().slice(0, 10);
+          return toDateStr(d); // local-safe — toISOString() here dropped a day in +tz zones
         }
 
         function doneThisPeriod(t) {
@@ -352,7 +352,7 @@ export const useStore = create(
           author: '',
           status: 'reading',
           notes: '',
-          dateStarted: new Date().toISOString().slice(0, 10),
+          dateStarted: todayStr(),
           dateCompleted: null,
           ...entry,
         }],
