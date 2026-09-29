@@ -203,6 +203,16 @@ export const useStore = create(
           return toDateStr(d); // local-safe — toISOString() here dropped a day in +tz zones
         }
 
+        // Completing advances at least one period, and keeps advancing while the
+        // due date is still in the past — so catching up an overdue recurring task
+        // lands on the next FUTURE occurrence instead of another past date.
+        function advanceDue(recurrence, from) {
+          if (!from) return null;
+          let next = shiftDate(recurrence, from, +1);
+          for (let i = 0; i < 500 && next <= today; i++) next = shiftDate(recurrence, next, +1);
+          return next;
+        }
+
         function doneThisPeriod(t) {
           if (!t.lastCompleted) return false;
           if (t.recurrence === 'daily')   return t.lastCompleted === today;
@@ -230,7 +240,7 @@ export const useStore = create(
                 ...t,
                 completed: false,           // stays in active list
                 lastCompleted: today,
-                dueDate: shiftDate(t.recurrence, t.dueDate, +1),
+                dueDate: advanceDue(t.recurrence, t.dueDate),
               };
             } else {
               // Un-completing: revert due date, clear lastCompleted
