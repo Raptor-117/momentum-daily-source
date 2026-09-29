@@ -77,10 +77,17 @@ const RECURRENCE_OPTS = [
 ];
 const RECURRENCE_ICON = { daily: '🔁', weekly: '🔄', monthly: '📅' };
 
-// Non-recurring only: did the user complete this task permanently?
-// Recurring tasks never go to Completed — they roll forward to next due date.
+// Non-recurring: permanent completion. Recurring: "done for the current period"
+// (mirrors toggleTask in the store) so the checkbox reflects state instead of
+// silently toggling. Recurring tasks still never move to the Completed list —
+// they roll their due date forward.
 function isEffectivelyComplete(task) {
   if (!task.recurrence || task.recurrence === 'none') return task.completed;
+  if (!task.lastCompleted) return false;
+  const today = todayStr();
+  if (task.recurrence === 'daily')   return task.lastCompleted === today;
+  if (task.recurrence === 'weekly')  return Math.floor((new Date(today + 'T00:00:00') - new Date(task.lastCompleted + 'T00:00:00')) / 86400000) < 7;
+  if (task.recurrence === 'monthly') return task.lastCompleted.slice(0, 7) === today.slice(0, 7);
   return false;
 }
 
