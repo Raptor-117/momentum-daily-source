@@ -77,10 +77,15 @@ const RECURRENCE_OPTS = [
 ];
 const RECURRENCE_ICON = { daily: '🔁', weekly: '🔄', monthly: '📅' };
 
-// Non-recurring: permanent completion. Recurring: "done for the current period"
-// (mirrors toggleTask in the store) so the checkbox reflects state instead of
-// silently toggling. Recurring tasks still never move to the Completed list —
-// they roll their due date forward.
+// Belongs in the Completed list. ONLY non-recurring tasks archive here;
+// recurring tasks always stay in the active list and roll their due date forward.
+function isArchivedComplete(task) {
+  return (!task.recurrence || task.recurrence === 'none') && task.completed;
+}
+
+// Checkbox state only. Non-recurring: permanent completion. Recurring: "done for
+// the current period" (mirrors toggleTask) so the tick reflects state — this does
+// NOT move the task to Completed (see isArchivedComplete for that partition).
 function isEffectivelyComplete(task) {
   if (!task.recurrence || task.recurrence === 'none') return task.completed;
   if (!task.lastCompleted) return false;
@@ -499,9 +504,9 @@ export default function TasksScreen({ theme, gamify }) {
     });
   }
 
-  const active      = applySearch(applyFilters(tasks.filter(t => !isEffectivelyComplete(t))));
+  const active      = applySearch(applyFilters(tasks.filter(t => !isArchivedComplete(t))));
   const done        = applySearch(tasks
-    .filter(t => isEffectivelyComplete(t))
+    .filter(t => isArchivedComplete(t))
     .sort((a, b) => (b.completedDate || '').localeCompare(a.completedDate || '')));
   const activeFilters = (filterComplexities.length > 0 ? 1 : 0) + (filterTags.length > 0 ? 1 : 0);
 
