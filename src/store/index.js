@@ -213,14 +213,6 @@ export const useStore = create(
           return next;
         }
 
-        function doneThisPeriod(t) {
-          if (!t.lastCompleted) return false;
-          if (t.recurrence === 'daily')   return t.lastCompleted === today;
-          if (t.recurrence === 'weekly')  return Math.floor((new Date(today+'T00:00:00')-new Date(t.lastCompleted+'T00:00:00'))/86400000) < 7;
-          if (t.recurrence === 'monthly') return t.lastCompleted.slice(0,7) === today.slice(0,7);
-          return false;
-        }
-
         return {
           tasks: s.tasks.map(t => {
             if (t.id !== id) return t;
@@ -231,26 +223,15 @@ export const useStore = create(
               return { ...t, completed: nc, completedDate: nc ? today : null };
             }
 
-            // Recurring: tick = mark done this period + advance due date (stays visible in upcoming)
-            //            un-tick = undo — revert due date and clear lastCompleted
-            const alreadyDone = doneThisPeriod(t);
-            if (!alreadyDone) {
-              // Completing: advance due date to next period, record lastCompleted
-              return {
-                ...t,
-                completed: false,           // stays in active list
-                lastCompleted: today,
-                dueDate: advanceDue(t.recurrence, t.dueDate),
-              };
-            } else {
-              // Un-completing: revert due date, clear lastCompleted
-              return {
-                ...t,
-                completed: false,
-                lastCompleted: null,
-                dueDate: shiftDate(t.recurrence, t.dueDate, -1),
-              };
-            }
+            // Recurring: forward-only. Each tap completes this occurrence and rolls
+            // the due date to the next one, which is then treated as a fresh task.
+            // No undo toggle — reverting on a second tap was the Sep/Oct bounce.
+            return {
+              ...t,
+              completed: false,            // recurring tasks never archive to Completed
+              lastCompleted: today,
+              dueDate: advanceDue(t.recurrence, t.dueDate),
+            };
           }),
         };
       }),
