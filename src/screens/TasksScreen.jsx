@@ -83,16 +83,11 @@ function isArchivedComplete(task) {
   return (!task.recurrence || task.recurrence === 'none') && task.completed;
 }
 
-// Checkbox state only. Non-recurring: permanent completion. Recurring: "done for
-// the current period" (mirrors toggleTask) so the tick reflects state — this does
-// NOT move the task to Completed (see isArchivedComplete for that partition).
+// Checkbox/strike state. Non-recurring: permanent completion. Recurring tasks
+// never show as ticked — completing them rolls the due date forward (advanceDue),
+// which moves them out of Due Today; that date change is the feedback.
 function isEffectivelyComplete(task) {
   if (!task.recurrence || task.recurrence === 'none') return task.completed;
-  if (!task.lastCompleted) return false;
-  const today = todayStr();
-  if (task.recurrence === 'daily')   return task.lastCompleted === today;
-  if (task.recurrence === 'weekly')  return Math.floor((new Date(today + 'T00:00:00') - new Date(task.lastCompleted + 'T00:00:00')) / 86400000) < 7;
-  if (task.recurrence === 'monthly') return task.lastCompleted.slice(0, 7) === today.slice(0, 7);
   return false;
 }
 
