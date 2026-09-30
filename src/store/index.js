@@ -197,9 +197,20 @@ export const useStore = create(
         function shiftDate(recurrence, from, direction) {
           if (!from) return null;
           const d = new Date(from + 'T00:00:00');
-          if (recurrence === 'daily')   d.setDate(d.getDate() + direction);
-          if (recurrence === 'weekly')  d.setDate(d.getDate() + direction * 7);
-          if (recurrence === 'monthly') d.setMonth(d.getMonth() + direction);
+          if (recurrence === 'daily')  d.setDate(d.getDate() + direction);
+          if (recurrence === 'weekly') d.setDate(d.getDate() + direction * 7);
+          if (recurrence === 'monthly') {
+            // setMonth overflows when the day doesn't exist in the target month
+            // (Oct 31 -> Dec 1). Clamp to the target month's last valid day, and
+            // keep end-of-month tasks on end-of-month (Oct 31 -> Nov 30 -> Dec 31)
+            // instead of drifting down to the 30th.
+            const lastDayOf = (y, m) => new Date(y, m + 1, 0).getDate();
+            const wasLastDay = d.getDate() === lastDayOf(d.getFullYear(), d.getMonth());
+            const t = new Date(d.getFullYear(), d.getMonth() + direction, 1);
+            const lastDay = lastDayOf(t.getFullYear(), t.getMonth());
+            t.setDate(wasLastDay ? lastDay : Math.min(d.getDate(), lastDay));
+            return toDateStr(t);
+          }
           return toDateStr(d); // local-safe — toISOString() here dropped a day in +tz zones
         }
 
