@@ -304,10 +304,11 @@ export default function App() {
     }
     function onVisible() { if (document.visibilityState === 'visible') autoPullIfIdle(); }
     document.addEventListener('visibilitychange', onVisible);
-    // Also refresh periodically while the app stays focused (so a screen you're
-    // watching updates on its own, not only when it regains focus).
-    const pollId = setInterval(autoPullIfIdle, 60000);
-    return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(pollId); };
+    // No periodic polling. The old 60s interval re-downloaded the FULL dataset
+    // (incl. all log history) every minute an app was open, which blew the
+    // Supabase egress quota. Pull on focus/visibility only — you still get fresh
+    // data every time you open or return to the app.
+    return () => { document.removeEventListener('visibilitychange', onVisible); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sign out ──────────────────────────────────────────────────────────────
