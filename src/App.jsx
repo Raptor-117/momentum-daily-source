@@ -61,6 +61,18 @@ export default function App() {
   const pushInFlightRef = useRef(false);
   const applyingRemoteRef = useRef(false); // true while hydrating FROM the cloud (so we don't mark that as a local edit)
 
+  // ── System UI follows the in-app theme ─────────────────────────────────────
+  // Dark mode only painted the React tree; <html>/<body> stayed white with no
+  // color-scheme, so Android drew a light system nav bar. Tell the browser.
+  // (index.html applies the same thing before first paint.)
+  useEffect(() => {
+    const bg = darkMode ? '#111827' : '#f4f5f7';
+    document.documentElement.style.colorScheme = darkMode ? 'dark' : 'light';
+    document.documentElement.style.background = bg;
+    document.body.style.background = bg;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', darkMode ? '#111827' : '#3b82f6');
+  }, [darkMode]);
+
   // ── Dev tab title ──────────────────────────────────────────────────────────
   useEffect(() => {
     const host = window.location.hostname;
@@ -209,7 +221,9 @@ export default function App() {
   }, []);
 
   // ── Push: local → cloud (local wins) ─────────────────────────────────────
-  async function handlePushToCloud(userId = authUser?.id) {
+  async function handlePushToCloud(arg) {
+    // Wired straight to onClick, so arg is usually the click event — only accept a real id.
+    const userId = typeof arg === 'string' ? arg : authUser?.id;
     if (!userId || syncing) return;
     setSyncing(true);
     try {

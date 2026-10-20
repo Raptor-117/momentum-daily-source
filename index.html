@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#3b82f6" />
+    <script>
+      // Apply saved dark mode before first paint so Android's system bars don't flash light.
+      try {
+        if (JSON.parse(localStorage.getItem('flow-realm-storage')).state.darkMode) {
+          document.documentElement.style.colorScheme = 'dark';
+          document.documentElement.style.background = '#111827';
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#111827');
+        }
+      } catch (e) {}
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Momentum Daily</title>

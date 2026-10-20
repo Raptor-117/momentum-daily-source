@@ -19,7 +19,9 @@ export async function pushAllData(userId, rawState) {
       sessionUser: session?.user?.id ?? null,
       wantUser: userId,
     });
-    return;
+    // Throw, don't return: callers treat a normal return as success and clear the
+    // unsaved-changes flag, which turned a skipped push into silent data loss.
+    throw new Error('Push skipped: not signed in as this user');
   }
 
   const state = rawState;
