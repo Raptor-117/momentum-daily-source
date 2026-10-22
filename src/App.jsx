@@ -71,6 +71,8 @@ export default function App() {
     document.documentElement.style.background = bg;
     document.body.style.background = bg;
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', darkMode ? '#111827' : '#3b82f6');
+    // Android's button bar comes from the manifest, not the page — point Chrome at the matching one.
+    document.querySelector('link[rel="manifest"]')?.setAttribute('href', darkMode ? './manifest-dark.json' : './manifest.json');
   }, [darkMode]);
 
   // ── Dev tab title ──────────────────────────────────────────────────────────
