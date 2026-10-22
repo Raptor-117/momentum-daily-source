@@ -401,7 +401,7 @@ export default function App() {
     <div className={`h-[100dvh] flex flex-col ${theme.bg}`}>
 
       {/* Top header */}
-      <div className={`flex-shrink-0 px-4 py-3 border-b flex items-center justify-between ${theme.header}`}>
+      <div className={`flex-shrink-0 px-4 pb-3 border-b flex items-center justify-between ${theme.header}`} style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}>
         <div className="w-16">
           {syncing && (
             <span className={`text-[10px] ${theme.muted}`}>Syncing…</span>
@@ -445,7 +445,7 @@ export default function App() {
       </div>
 
       {/* Sticky bottom nav */}
-      <div className={`flex-shrink-0 border-t px-1 py-2 ${theme.nav}`}>
+      <div className={`flex-shrink-0 border-t px-1 pt-2 ${theme.nav}`} style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}>
         <div className="flex">
           {TABS.map(t => (
             <button
