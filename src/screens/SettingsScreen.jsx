@@ -1090,7 +1090,11 @@ export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, o
 
       {/* ── Version ── */}
       <div className="mt-6 text-center">
-        <p className={`text-xs ${theme.muted}`}>Momentum Daily</p>
+        <p className={`text-xs ${theme.muted}`}>
+          Momentum Daily
+          {/* Preview deploys are <hash|branch>.momentum-daily.pages.dev; prod is the bare domain. */}
+          {location.hostname.endsWith('.momentum-daily.pages.dev') && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold">DEV</span>}
+        </p>
         <p className={`text-xs font-mono mt-0.5 ${theme.muted}`}>built {new Date(__BUILD_TIME__).toLocaleString()}</p>
       </div>
 
