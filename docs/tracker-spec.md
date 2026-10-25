@@ -140,5 +140,6 @@ Each phase ships to dev for testing before prod.
 
 ## Sequencing
 
-Tracker first, then per-item ("only what changed") sync — see the queued sync
-work; the new activity fields get built into the new sync from the start.
+Recommended (awaiting user confirmation): Tracker first, then per-item ("only
+what changed") sync, so the new activity fields get built into the new sync from
+the start.
