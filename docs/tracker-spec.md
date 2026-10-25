@@ -130,11 +130,15 @@ Habits screen labels follow cadence: daily shows today (`✓` / `0/1`) and
 
 Each phase ships to dev for testing before prod.
 
-## Open decisions
+## Decisions
 
-1. **Partial credit vs strict ticks** — recommended partial (above). Strict = a habit
-   only earns its point if fully met (closer to paper, much harsher on daily habits).
-2. **Completed tasks in the score?** The planner has a "Tasks score". Recommended:
-   leave tasks out of v1 and show a separate "Tasks: N done, M overdue" line.
-3. **In-app daily-logging start date** for the import cutover (first non-imported
-   day; believed to be early April 2026 — confirm from the data before Phase 2).
+1. **Partial credit** (decided 2026-10-25). Strict ticks (1 only at 100%) rejected.
+2. **Tasks are separate** (decided 2026-10-25) — they don't count toward the
+   calendar or any score.
+3. **In-app daily-logging start date** — "around April 2026" per user; confirming
+   from the logs (first month with non-Saturday logs) before Phase 2.
+
+## Sequencing
+
+Tracker first, then per-item ("only what changed") sync — see the queued sync
+work; the new activity fields get built into the new sync from the start.
