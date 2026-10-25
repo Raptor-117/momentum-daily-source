@@ -23,6 +23,11 @@ export function captureError(err, ctx = {}) {
   // Always log to console so dev tools still work
   console.error(`[${ctx.context || 'app'}]`, error.message, ctx);
 
+  // Expected transients — no one affected, sync retries on its own. Kept out of
+  // Sentry so real errors stand out. Server error responses (e.g. a 402 quota
+  // restriction) are not matched and still report.
+  if (/Failed to fetch|Load failed|NetworkError|JWT issued at future/i.test(error.message) || ctx.code === 'PGRST303') return;
+
   // Send to Sentry with extra context
   Sentry.withScope(scope => {
     if (ctx.context) scope.setTag('context', ctx.context);
