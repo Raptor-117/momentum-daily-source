@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { captureError } from './errors';
-import { todayStr } from '../data';
+import { todayStr, normalizeActivity, weeklyGoal } from '../data';
 
 // ── Push: write local Zustand state to Supabase ───────────────────────────────
 
@@ -213,8 +213,14 @@ async function pushActivities(userId, activities) {
       label: a.name || a.label,
       emoji: a.emoji,
       color: a.color || '#6366f1',
-      weekly_target: a.weeklyTarget ?? 0,
+      cadence: a.cadence,
+      target: a.target,
+      // Legacy column, kept as the WEEKLY equivalent so app versions from before
+      // cadence (a tab left open on another device) still read sensible numbers.
+      weekly_target: weeklyGoal(a) ?? a.target ?? 0,
       has_target: a.hasTarget ?? false,
+      archived_at: a.archivedAt ?? null,
+      config_history: a.configHistory ?? null,
       accountability: a.accountability ?? false,
       tags: Array.isArray(a.tags) ? a.tags : [],
       pillars: Array.isArray(a.pillars) ? a.pillars : [],
@@ -251,13 +257,17 @@ async function pullActivities(userId) {
     .order('sort_order');
   if (error) throw error;
   // Store uses 'name', Supabase column is 'label' — map back correctly
-  return (data || []).map(a => ({
+  return (data || []).map(a => normalizeActivity({
     id: a.id,
     name: a.label,
     emoji: a.emoji,
     color: a.color,
+    cadence: a.cadence,          // null until a cadence-aware client pushes — normalize derives it
+    target: a.target,
     weeklyTarget: a.weekly_target,
     hasTarget: a.has_target,
+    archivedAt: a.archived_at,
+    configHistory: a.config_history,
     accountability: a.accountability ?? false,
     tags: a.tags || [],
     pillars: a.pillars || [],

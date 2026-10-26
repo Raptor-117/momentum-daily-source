@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
-import { todayStr, toDateStr, formatDisplayDate, getWeekStart, MONTH_NAMES_FULL } from '../data';
+import { todayStr, toDateStr, formatDisplayDate, getWeekStart, MONTH_NAMES_FULL, weeklyGoal } from '../data';
 
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function offsetDate(dateStr, delta) {
@@ -503,8 +503,9 @@ function habitStat(activity, count, weekTotal) {
   if (activity.scheduledDays && activity.scheduledDays.length > 0) {
     return { label: count > 0 ? '✓' : '✗', done: count > 0, isTick: true };
   }
-  if (activity.hasTarget) {
-    return { label: `${weekTotal}/${activity.weeklyTarget}`, done: weekTotal >= activity.weeklyTarget, isTick: false };
+  const goal = weeklyGoal(activity); // weekly equivalent; null for monthly/log
+  if (goal != null) {
+    return { label: `${weekTotal}/${goal}`, done: weekTotal >= goal, isTick: false };
   }
   return { label: String(count), done: count > 0, isTick: false };
 }

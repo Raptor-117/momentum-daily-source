@@ -30,6 +30,57 @@ export const DEFAULT_ACTIVITIES = [
   { id: 'launch-t',    name: 'Launches (Team)',                  weeklyTarget: 1, emoji: '👥', hasTarget: false, tags: ['business'], accountability: false },
 ];
 
+// ─────────────────────────────────────────────
+// CADENCE (docs/tracker-spec.md)
+// ─────────────────────────────────────────────
+// `target` is in the cadence's unit: per day / per week / per month. Log habits
+// have no target. `hasTarget` is kept (derived) because existing views use it.
+export const CADENCES = [
+  { id: 'daily',   label: 'Daily',    unit: 'day' },
+  { id: 'weekly',  label: 'Weekly',   unit: 'week' },
+  { id: 'monthly', label: 'Monthly',  unit: 'month' },
+  { id: 'log',     label: 'Log only', unit: null },
+];
+
+// Pre-cadence habits only had a weekly target. Classify them: 7/week = daily,
+// otherwise weekly, no target = log. Two default habits break that rule
+// (user's classification, 2026-09).
+const CADENCE_OVERRIDES = { reading: 'daily', 'ip-mpa': 'weekly' };
+
+// Idempotent: brings any activity (defaults, saved local data, cloud row, backup)
+// to the cadence shape. Safe to run on already-normalised activities.
+export function normalizeActivity(a) {
+  let { cadence, target } = a;
+  if (!cadence) {
+    target  = a.weeklyTarget ?? 1;
+    cadence = a.hasTarget === false ? 'log'
+      : CADENCE_OVERRIDES[a.id] || (target === 7 ? 'daily' : 'weekly');
+    if (cadence === 'daily') target = 1; // was N per week → once per day
+  }
+  if (target == null) target = 1;
+  const { weeklyTarget, ...rest } = a;
+  return {
+    ...rest,
+    cadence,
+    target,
+    hasTarget: cadence !== 'log',
+    archivedAt: a.archivedAt ?? null,
+    // Settings in effect from each date, so history is scored as it was (spec §4).
+    configHistory: a.configHistory?.length ? a.configHistory : [{
+      effectiveFrom: a.createdAt || '2020-01-01',
+      cadence, target, scheduledDays: a.scheduledDays || [],
+    }],
+  };
+}
+
+// Weekly equivalent of a habit's target, for the existing week-based views
+// ("3/7 this week", milestones). null = no weekly goal (monthly / log).
+export function weeklyGoal(a) {
+  if (a.cadence === 'weekly') return a.target;
+  if (a.cadence === 'daily')  return a.target * (a.scheduledDays?.length || 7);
+  return null;
+}
+
 export const MONTH_NAMES      = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 export const MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 export const DAY_LABELS       = ['Sat','Sun','Mon','Tue','Wed','Thu','Fri'];

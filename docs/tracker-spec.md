@@ -110,12 +110,17 @@ Habits screen labels follow cadence: daily shows today (`✓` / `0/1`) and
 
 ## 5. Data / sync changes
 
-- `activities.cadence text not null default 'weekly'` (`daily|weekly|monthly|log`).
-- Keep `weekly_target` as the target column, **reinterpreted per cadence**.
-  ponytail: misleading column name; rename to `target` only if it confuses someone.
+- `activities.cadence text` (`daily|weekly|monthly|log`), **nullable**: null means
+  "not yet classified" and the app derives it (`normalizeActivity`). A default would
+  make every existing row look like `weekly`.
+- `activities.target int` — the target in the cadence's unit. A **new** column, not
+  `weekly_target` reinterpreted: an app version from before cadence (e.g. a tab left
+  open) would push `weekly_target = 7` back for Audios and the new app would read
+  "7 per day". `weekly_target` is still written, as the weekly equivalent.
 - `activities.archived_at date null`; `activities.config_history jsonb` (on the row,
   so it rides the existing activity sync — no new table/sync path).
-- `goal_percent int default 70` on `user_preferences`.
+- Goal % lives in the already-synced `user_preferences.ui_prefs` JSON (Phase 3) —
+  no column needed.
 - Older cached app versions don't send `cadence`; PostgREST upsert only updates
   columns present, so they can't wipe it.
 

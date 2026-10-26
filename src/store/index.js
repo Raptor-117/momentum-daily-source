@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   DEFAULT_ACTIVITIES, DEFAULT_TAGS, MOCK_TASKS, MOCK_LOGS,
-  getWeekDays, calcStreak, todayStr, toDateStr,
+  getWeekDays, calcStreak, todayStr, toDateStr, normalizeActivity,
 } from '../data';
 
 const DEFAULT_JOURNAL_PROMPTS = [
@@ -34,23 +34,32 @@ export const useStore = create(
       setDefaultTab: (tab) => set(() => ({ defaultTab: tab })),
 
       // ── ACTIVITIES ──────────────────────────────────────────────────────
-      activities: DEFAULT_ACTIVITIES.map(a => ({ ...a })),
+      activities: DEFAULT_ACTIVITIES.map(normalizeActivity),
 
       addActivity: (activity) => set((s) => ({
-        activities: [...s.activities, {
+        activities: [...s.activities, normalizeActivity({
           id: `act-${Date.now()}`,
           emoji: '📌',
-          weeklyTarget: 1,
-          hasTarget: true,
+          cadence: 'weekly',
+          target: 1,
           tags: [],
           notes: '',
           createdAt: todayStr(),
           ...activity,
-        }],
+        })],
       })),
 
+      // Edits to cadence/target/schedule are recorded with today's date so past
+      // days keep being scored against the settings in effect then (spec §4).
       updateActivity: (id, updates) => set((s) => ({
-        activities: s.activities.map(a => a.id === id ? { ...a, ...updates } : a),
+        activities: s.activities.map(a => {
+          if (a.id !== id) return a;
+          const next = { ...a, ...updates };
+          if (!['cadence', 'target', 'scheduledDays'].some(k => k in updates)) return next;
+          const rec = { effectiveFrom: todayStr(), cadence: next.cadence, target: next.target, scheduledDays: next.scheduledDays || [] };
+          const history = (a.configHistory || []).filter(r => r.effectiveFrom !== rec.effectiveFrom);
+          return { ...next, hasTarget: next.cadence !== 'log', configHistory: [...history, rec] };
+        }),
       })),
 
       // Hard delete — only used when activity has no logs
@@ -61,11 +70,11 @@ export const useStore = create(
 
       // Soft archive — hides activity but preserves all logs
       archiveActivity: (id) => set((s) => ({
-        activities: s.activities.map(a => a.id === id ? { ...a, archived: true } : a),
+        activities: s.activities.map(a => a.id === id ? { ...a, archived: true, archivedAt: todayStr() } : a),
       })),
 
       unarchiveActivity: (id) => set((s) => ({
-        activities: s.activities.map(a => a.id === id ? { ...a, archived: false } : a),
+        activities: s.activities.map(a => a.id === id ? { ...a, archived: false, archivedAt: null } : a),
       })),
 
       // Callers pass only the habits they're reordering (the Habits screen passes
@@ -473,6 +482,12 @@ export const useStore = create(
     }),
     {
       name: 'flow-realm-storage',
+      // v1: habits gain cadence/target/configHistory (docs/tracker-spec.md).
+      version: 1,
+      migrate: (state, version) => {
+        if (version < 1 && state?.activities) state.activities = state.activities.map(normalizeActivity);
+        return state;
+      },
       // Only persist data — not computed functions
       partialize: (s) => ({
         darkMode:       s.darkMode,

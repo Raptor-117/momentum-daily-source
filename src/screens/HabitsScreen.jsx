@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
-import { todayStr, getWeekStart, getWeekDays, MONTH_NAMES_FULL, calcPerfectDayStreak } from '../data';
+import { todayStr, getWeekStart, getWeekDays, MONTH_NAMES_FULL, calcPerfectDayStreak, CADENCES, weeklyGoal } from '../data';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const DAY_NAMES  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -17,6 +17,7 @@ const DAY_SHORT  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_LETTER = ['S','M','T','W','T','F','S'];
 
 function isDueOn(activity, dateStr) {
+  if (activity.cadence !== 'daily') return true; // only daily habits use scheduled days
   const days = activity.scheduledDays;
   if (!days || days.length === 0) return true;
   const dow = new Date(dateStr + 'T00:00:00').getDay();
@@ -50,6 +51,49 @@ function DayPicker({ selected = [], onChange, theme }) {
       </div>
     </div>
   );
+}
+
+const UNIT_SHORT = { daily: '/day', weekly: '/wk', monthly: '/mo' };
+
+function CadencePicker({ value, onChange, theme }) {
+  return (
+    <div>
+      <p className={`text-xs mb-1.5 ${theme.muted}`}>How often</p>
+      <div className="flex gap-1">
+        {CADENCES.map(c => (
+          <button
+            key={c.id}
+            onClick={() => onChange(c.id)}
+            className={`flex-1 h-7 rounded-lg text-xs font-semibold transition-all ${value === c.id ? theme.btnPrimary : theme.btnSecondary}`}
+          >{c.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Re-express the target in the new cadence's unit, rather than silently turning
+// "7 per week" into "7 per day".
+function convertTarget(from, to, target) {
+  if (to === 'daily') return 1;
+  if (from === 'daily' && to === 'weekly') return target * 7;
+  return target;
+}
+
+// Progress toward the habit's current period goal, in its cadence's terms.
+function periodProgress(a, viewDate, weekStart, logs) {
+  const byDate = logs[a.id] || {};
+  if (a.cadence === 'daily') {
+    const due = getWeekDays(weekStart).filter(d => isDueOn(a, d));
+    return { done: due.filter(d => (byDate[d] || 0) >= a.target).length, goal: due.length, unitLabel: 'days this week' };
+  }
+  if (a.cadence === 'monthly') {
+    const month = viewDate.slice(0, 7);
+    const done  = Object.entries(byDate).reduce((s, [d, n]) => (d.startsWith(month) ? s + n : s), 0);
+    return { done, goal: a.target, unitLabel: 'this month' };
+  }
+  const done = getWeekDays(weekStart).reduce((s, d) => s + (byDate[d] || 0), 0);
+  return { done, goal: a.target, unitLabel: 'this week' };
 }
 
 function offsetDate(dateStr, delta) {
@@ -96,20 +140,25 @@ function DragHandle({ handleProps, theme }) {
 
 // ─── Habit card ───────────────────────────────────────────────────────────────
 function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, hasLogs, dragHandleProps, isDragOverlay, viewDate }) {
-  const { updateActivity, getCount, getWeeklyTotal, getStreak, logActivity, weekStartDay } = useStore();
+  const { updateActivity, getCount, getStreak, logActivity, weekStartDay, logs } = useStore();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [confirmDel,   setConfirmDel]   = useState(false);
-  const [localTarget,  setLocalTarget]  = useState(String(activity.weeklyTarget ?? 1));
+  const [localTarget,  setLocalTarget]  = useState(String(activity.target ?? 1));
 
   const targetInvalid = activity.hasTarget && (localTarget === '' || parseInt(localTarget) < 1 || isNaN(parseInt(localTarget)));
 
   function handleTargetChange(val) {
     setLocalTarget(val);
     const n = parseInt(val);
-    if (n >= 1) updateActivity(activity.id, { weeklyTarget: n });
+    if (n >= 1) updateActivity(activity.id, { target: n });
   }
   function handleTargetBlur() {
-    if (targetInvalid) setLocalTarget(String(activity.weeklyTarget));
+    if (targetInvalid) setLocalTarget(String(activity.target));
+  }
+  function handleCadence(c) {
+    const target = convertTarget(activity.cadence, c, activity.target);
+    updateActivity(activity.id, { cadence: c, target });
+    setLocalTarget(String(target));
   }
   function toggleTag(id) {
     const cur = activity.tags || [];
@@ -150,7 +199,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
                   targetInvalid ? 'border-red-400 bg-red-50 text-red-600' : theme.input
                 }`}
               />
-              <span className={`text-xs ${theme.muted}`}>/wk</span>
+              <span className={`text-xs ${theme.muted}`}>{UNIT_SHORT[activity.cadence]}</span>
             </div>
           )}
 
@@ -172,18 +221,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
               className={`w-full text-xs px-2 py-2 rounded-lg border outline-none resize-none ${theme.input}`}
             />
 
-            <div className={`flex items-center justify-between px-2 py-2 rounded-lg ${theme.progressBg}`}>
-              <div>
-                <p className={`text-xs font-medium ${theme.text}`}>Weekly target</p>
-                <p className={`text-xs ${theme.muted}`}>{activity.hasTarget ? 'Track toward a goal' : 'Just log occurrences'}</p>
-              </div>
-              <button
-                onClick={() => updateActivity(activity.id, { hasTarget: !activity.hasTarget })}
-                className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${activity.hasTarget ? theme.toggleOn : theme.toggleOff}`}
-              >
-                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${activity.hasTarget ? 'translate-x-5' : 'translate-x-0.5'}`} />
-              </button>
-            </div>
+            <CadencePicker value={activity.cadence} onChange={handleCadence} theme={theme} />
 
             <div className={`flex items-center justify-between px-2 py-2 rounded-lg ${theme.progressBg}`}>
               <div>
@@ -198,11 +236,13 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
               </button>
             </div>
 
-            <DayPicker
-              selected={activity.scheduledDays || []}
-              onChange={days => updateActivity(activity.id, { scheduledDays: days })}
-              theme={theme}
-            />
+            {activity.cadence === 'daily' && (
+              <DayPicker
+                selected={activity.scheduledDays || []}
+                onChange={days => updateActivity(activity.id, { scheduledDays: days })}
+                theme={theme}
+              />
+            )}
 
             {allTags.length > 0 && (
               <div>
@@ -257,10 +297,10 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
   // ── VIEW MODE ──────────────────────────────────────────────────────────────
   const weekStart = getWeekStart(viewDate, weekStartDay);
   const count     = getCount(activity.id, viewDate);
-  const weekTotal = getWeeklyTotal(activity.id, weekStart);
   const streak    = getStreak(activity.id);
-  const hit       = activity.hasTarget && weekTotal >= activity.weeklyTarget;
-  const pct       = activity.hasTarget ? Math.round((weekTotal / activity.weeklyTarget) * 100) : 0;
+  const { done, goal, unitLabel } = periodProgress(activity, viewDate, weekStart, logs);
+  const hit       = activity.hasTarget && done >= goal;
+  const pct       = activity.hasTarget && goal > 0 ? Math.round((done / goal) * 100) : 0;
   const barWidth  = Math.min(100, pct);
   const dueToday  = isDueOn(activity, viewDate);
   const schedLabel = scheduledLabel(activity.scheduledDays);
@@ -274,7 +314,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
           {activity.notes && <p className={`text-xs mt-0.5 leading-snug ${theme.muted}`}>{activity.notes}</p>}
           {activity.hasTarget && dueToday && (
             <p className={`text-xs mt-0.5 ${hit ? theme.hitTarget + ' font-medium' : theme.muted}`}>
-              {hit ? `✓ ${weekTotal}/${activity.weeklyTarget} this week` : `${weekTotal}/${activity.weeklyTarget} this week`}
+              {hit ? `✓ ${done}/${goal} ${unitLabel}` : `${done}/${goal} ${unitLabel}`}
             </p>
           )}
           {!dueToday && schedLabel && (
@@ -339,19 +379,20 @@ function SortableHabitCard(props) {
 }
 
 // ─── Add habit form (new habits only) ────────────────────────────────────────
-const BLANK_HABIT = { name: '', emoji: '📌', weeklyTarget: 1, hasTarget: true, tags: [], notes: '', accountability: false, scheduledDays: [] };
+const BLANK_HABIT = { name: '', emoji: '📌', cadence: 'weekly', target: 1, tags: [], notes: '', accountability: false, scheduledDays: [] };
 
 function AddHabitForm({ allTags, theme, onSave, onCancel }) {
-  const [form, setForm] = useState({ ...BLANK_HABIT, weeklyTarget: '1' });
+  const [form, setForm] = useState({ ...BLANK_HABIT, target: '1' });
 
-  const targetInvalid = form.hasTarget && (form.weeklyTarget === '' || parseInt(form.weeklyTarget) < 1 || isNaN(parseInt(form.weeklyTarget)));
+  const hasTarget     = form.cadence !== 'log';
+  const targetInvalid = hasTarget && (form.target === '' || parseInt(form.target) < 1 || isNaN(parseInt(form.target)));
 
   function toggleTag(id) {
     setForm(f => ({ ...f, tags: f.tags.includes(id) ? f.tags.filter(t => t !== id) : [...f.tags, id] }));
   }
   function handleSave() {
     if (!form.name.trim() || targetInvalid) return;
-    onSave({ ...form, weeklyTarget: parseInt(form.weeklyTarget) });
+    onSave({ ...form, target: hasTarget ? parseInt(form.target) : 1, scheduledDays: form.cadence === 'daily' ? form.scheduledDays : [] });
   }
 
   return (
@@ -368,24 +409,19 @@ function AddHabitForm({ allTags, theme, onSave, onCancel }) {
           rows={2} className={`w-full text-sm px-3 py-2 rounded-lg border outline-none resize-none ${theme.input}`} />
         <div className="flex items-center gap-1.5">
           <span className={`text-xs whitespace-nowrap ${theme.muted}`}>Target:</span>
-          <input type="number" min="1" value={form.weeklyTarget} disabled={!form.hasTarget}
-            onChange={e => setForm(f => ({ ...f, weeklyTarget: e.target.value }))}
+          <input type="number" min="1" value={form.target} disabled={!hasTarget}
+            onChange={e => setForm(f => ({ ...f, target: e.target.value }))}
             className={`w-12 text-xs px-2 py-1.5 rounded-lg border outline-none text-center disabled:opacity-30 transition-colors ${
               targetInvalid ? 'border-red-400 bg-red-50 text-red-600' : theme.input
             }`} />
-          <span className={`text-xs ${theme.muted}`}>/wk</span>
+          <span className={`text-xs ${theme.muted}`}>{UNIT_SHORT[form.cadence] || ''}</span>
           {targetInvalid && <span className="text-xs text-red-500 font-medium">required</span>}
         </div>
-        <div className={`flex items-center justify-between px-2 py-2 rounded-lg ${theme.progressBg}`}>
-          <div>
-            <p className={`text-xs font-medium ${theme.text}`}>Weekly target</p>
-            <p className={`text-xs ${theme.muted}`}>{form.hasTarget ? 'Track toward a goal' : 'Just log occurrences'}</p>
-          </div>
-          <button onClick={() => setForm(f => ({ ...f, hasTarget: !f.hasTarget }))}
-            className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${form.hasTarget ? theme.toggleOn : theme.toggleOff}`}>
-            <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${form.hasTarget ? 'translate-x-5' : 'translate-x-0.5'}`} />
-          </button>
-        </div>
+        <CadencePicker
+          value={form.cadence}
+          onChange={c => setForm(f => ({ ...f, cadence: c, target: String(convertTarget(f.cadence, c, parseInt(f.target) || 1)) }))}
+          theme={theme}
+        />
         <div className={`flex items-center justify-between px-2 py-2 rounded-lg ${theme.progressBg}`}>
           <div>
             <p className={`text-xs font-medium ${theme.text}`}>Daily accountability</p>
@@ -396,11 +432,13 @@ function AddHabitForm({ allTags, theme, onSave, onCancel }) {
             <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${form.accountability ? 'translate-x-5' : 'translate-x-0.5'}`} />
           </button>
         </div>
-        <DayPicker
-          selected={form.scheduledDays || []}
-          onChange={days => setForm(f => ({ ...f, scheduledDays: days }))}
-          theme={theme}
-        />
+        {form.cadence === 'daily' && (
+          <DayPicker
+            selected={form.scheduledDays || []}
+            onChange={days => setForm(f => ({ ...f, scheduledDays: days }))}
+            theme={theme}
+          />
+        )}
         {allTags.length > 0 && (
           <div>
             <p className={`text-xs mb-1.5 ${theme.muted}`}>Tags</p>
@@ -436,7 +474,7 @@ function calcConsecutiveWeeks(habitIds, logs, activities, currentWeekStart) {
       const act = activities.find(a => a.id === id);
       if (!act) return false;
       const total = wDays.reduce((s, d) => s + ((logs[id] || {})[d] || 0), 0);
-      return total >= (act.weeklyTarget || 1);
+      return total >= (weeklyGoal(act) ?? 1);
     });
     if (!allHit) break;
     count++;
@@ -595,7 +633,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
       const act = activeActivities.find(a => a.id === id);
       if (!act) return false;
       const weekTotal = weekDays.reduce((s, d) => s + ((logs[id] || {})[d] || 0), 0);
-      return weekTotal >= (act.weeklyTarget || 1);
+      return weekTotal >= (weeklyGoal(act) ?? 1);
     });
     const seenKey = `weekly-${weekStart}`;
     if (allHit && milestoneSeen.weekly !== seenKey && !popupShownRef.current.has(seenKey)) {
@@ -709,8 +747,8 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
       const wt = getWeeklyTotal(a.id, weekStart);
       const match =
         (filterStatuses.includes('No target') && !a.hasTarget) ||
-        (filterStatuses.includes('Achieved')  && a.hasTarget && wt >= a.weeklyTarget) ||
-        (filterStatuses.includes('Behind')    && a.hasTarget && wt < a.weeklyTarget) ||
+        (filterStatuses.includes('Achieved')  && weeklyGoal(a) != null && wt >= weeklyGoal(a)) ||
+        (filterStatuses.includes('Behind')    && weeklyGoal(a) != null && wt < weeklyGoal(a)) ||
         (filterStatuses.includes('Daily')     && !!a.accountability);
       if (!match) return false;
     }
@@ -916,7 +954,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
                 const act = activeActivities.find(a => a.id === id);
                 if (!act) return false;
                 const wt = weekDays.reduce((s, d) => s + ((logs[id] || {})[d] || 0), 0);
-                return wt >= (act.weeklyTarget || 1);
+                return wt >= (weeklyGoal(act) ?? 1);
               }).length;
               return (
                 <MilestoneCard
@@ -1039,7 +1077,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
                 <div>
                   <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Habits to watch</p>
                   <div className="space-y-1 max-h-44 overflow-y-auto">
-                    {activeActivities.filter(a => a.hasTarget).map(a => {
+                    {activeActivities.filter(a => weeklyGoal(a) != null).map(a => {
                       const sel = (milestoneModal.habits || []).includes(a.id);
                       return (
                         <button
@@ -1056,7 +1094,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
                         </button>
                       );
                     })}
-                    {activeActivities.filter(a => a.hasTarget).length === 0 && (
+                    {activeActivities.filter(a => weeklyGoal(a) != null).length === 0 && (
                       <p className={`text-xs text-center py-2 ${theme.muted}`}>No habits with weekly targets yet</p>
                     )}
                   </div>
@@ -1069,7 +1107,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
                   <div>
                     <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>Habits to watch</p>
                     <div className="space-y-1 max-h-36 overflow-y-auto">
-                      {activeActivities.filter(a => a.hasTarget).map(a => {
+                      {activeActivities.filter(a => weeklyGoal(a) != null).map(a => {
                         const sel = (milestoneModal.habits || []).includes(a.id);
                         return (
                           <button
@@ -1086,7 +1124,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
                           </button>
                         );
                       })}
-                      {activeActivities.filter(a => a.hasTarget).length === 0 && (
+                      {activeActivities.filter(a => weeklyGoal(a) != null).length === 0 && (
                         <p className={`text-xs text-center py-2 ${theme.muted}`}>No habits with weekly targets yet</p>
                       )}
                     </div>

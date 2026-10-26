@@ -248,8 +248,12 @@ function render() {
   activities.forEach(a => {
     const todayCount = (logs[a.id] || {})[today] || 0;
     const weekTotal  = weekDays.reduce((s, d) => s + ((logs[a.id] || {})[d] || 0), 0);
-    const pct        = a.hasTarget ? Math.round((weekTotal / a.weeklyTarget) * 100) : 0;
-    const hit        = a.hasTarget && weekTotal >= a.weeklyTarget;
+    // Weekly equivalent of the cadence target (mirrors weeklyGoal in src/data); null = monthly/log
+    const goal       = a.cadence === 'weekly' ? a.target
+                     : a.cadence === 'daily'  ? a.target * ((a.scheduledDays || []).length || 7)
+                     : null;
+    const pct        = goal ? Math.round((weekTotal / goal) * 100) : 0;
+    const hit        = goal != null && weekTotal >= goal;
     const logged     = todayCount > 0;
     if (logged) loggedToday++;
 
@@ -261,8 +265,8 @@ function render() {
         <div class="habit-emoji">${a.emoji}</div>
         <div class="habit-info">
           <div class="habit-name">${a.name}</div>
-          ${a.hasTarget
-            ? `<div class="habit-sub">${hit ? '✓' : ''} ${weekTotal}/${a.weeklyTarget} this week · ${pct}%</div>
+          ${goal != null
+            ? `<div class="habit-sub">${hit ? '✓' : ''} ${weekTotal}/${goal} this week · ${pct}%</div>
                <div class="habit-bar"><div class="habit-bar-fill" style="width:${barWidth}%;background:${color}"></div></div>`
             : a.notes
               ? `<div class="habit-sub">${a.notes}</div>`

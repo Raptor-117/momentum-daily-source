@@ -2,7 +2,7 @@ import { useState, Component } from 'react';
 import { useStore } from '../store';
 import {
   todayStr, toDateStr, getWeekStart, getWeekDays, getCalendarMonthChunks,
-  getDayLabels, MONTH_NAMES, MONTH_NAMES_FULL,
+  getDayLabels, MONTH_NAMES, MONTH_NAMES_FULL, weeklyGoal,
 } from '../data';
 
 // ─── Shared emotion map ───────────────────────────────────────────────────────
@@ -584,7 +584,7 @@ function StatsView({ theme }) {
               {activities.map(a => {
                 const dayCounts = viewWeekDays.map(d => getCount(a.id, d));
                 const total     = dayCounts.reduce((s, v) => s + v, 0);
-                const hit       = a.hasTarget && total >= a.weeklyTarget;
+                const hit       = weeklyGoal(a) != null && total >= weeklyGoal(a);
                 return (
                   <tr key={a.id} className={`border-t ${theme.divider}`}>
                     <td className={`py-2 pr-2 font-medium sticky left-0 leading-tight ${theme.card} ${theme.textSub}`}>{a.name}</td>
@@ -773,7 +773,7 @@ function StatsView({ theme }) {
       activities.forEach(a => {
         const counts = viewWeekDays.map(d => getCount(a.id, d));
         const total  = counts.reduce((s, v) => s + v, 0);
-        const hit    = a.hasTarget && total >= a.weeklyTarget;
+        const hit    = weeklyGoal(a) != null && total >= weeklyGoal(a);
         const avg    = total > 0 ? (total / 7).toFixed(1) : '0';
         lines.push(`${a.emoji || ''} ${a.name}: ${total}${hit ? ' ✓' : ''}  (avg ${avg}/day)`);
       });
