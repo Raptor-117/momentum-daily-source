@@ -139,12 +139,9 @@ Each phase ships to dev for testing before prod.
    are Saturday-only imported weeks; first non-Saturday log is 6 May 2026).
    - Before the cutover: weekly-data mode (§4) — daily habits score from weekly
      totals, and the daily calendar is greyed "weekly data only".
-   - **Not tracked ≠ 0%:** before the cutover, a week/month with no logs at all is
-     shown as "not tracked" and excluded from scores (covers the empty stretch
-     mid-March → 5 May). From the cutover on, zero logs is a real 0.
+   - Weeks/months with no logs simply score 0% — no special "not tracked" state
+     (user confirmed April 2026 was genuinely untracked and 0% is fine).
    - In the cutover week/month, daily habits are only "due" from 6 May.
-   - Open: user to confirm April 2026 was genuinely untracked (no rows exist for it)
-     and not stranded data from the earlier duplicate-account mix-up.
 
 ## Sequencing
 
