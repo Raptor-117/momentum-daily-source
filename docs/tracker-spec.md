@@ -135,8 +135,16 @@ Each phase ships to dev for testing before prod.
 1. **Partial credit** (decided 2026-10-25). Strict ticks (1 only at 100%) rejected.
 2. **Tasks are separate** (decided 2026-10-25) — they don't count toward the
    calendar or any score.
-3. **In-app daily-logging start date** — "around April 2026" per user; confirming
-   from the logs (first month with non-Saturday logs) before Phase 2.
+3. **Daily-logging cutover = 2026-05-06** (confirmed from logs 2026-10-26: Dec–Mar
+   are Saturday-only imported weeks; first non-Saturday log is 6 May 2026).
+   - Before the cutover: weekly-data mode (§4) — daily habits score from weekly
+     totals, and the daily calendar is greyed "weekly data only".
+   - **Not tracked ≠ 0%:** before the cutover, a week/month with no logs at all is
+     shown as "not tracked" and excluded from scores (covers the empty stretch
+     mid-March → 5 May). From the cutover on, zero logs is a real 0.
+   - In the cutover week/month, daily habits are only "due" from 6 May.
+   - Open: user to confirm April 2026 was genuinely untracked (no rows exist for it)
+     and not stranded data from the earlier duplicate-account mix-up.
 
 ## Sequencing
 
