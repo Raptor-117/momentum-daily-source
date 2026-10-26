@@ -68,7 +68,13 @@ export const useStore = create(
         activities: s.activities.map(a => a.id === id ? { ...a, archived: false } : a),
       })),
 
-      setActivityOrder: (newActivities) => set(() => ({ activities: newActivities })),
+      // Callers pass only the habits they're reordering (the Habits screen passes
+      // the non-archived ones). Keep everything else — dropping archived habits
+      // here made the next push delete them, and the logs FK cascades.
+      setActivityOrder: (ordered) => set((s) => {
+        const ids = new Set(ordered.map(a => a.id));
+        return { activities: [...ordered, ...s.activities.filter(a => !ids.has(a.id))] };
+      }),
 
       reorderActivity: (id, direction) => set((s) => {
         const idx    = s.activities.findIndex(a => a.id === id);
