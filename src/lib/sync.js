@@ -4,6 +4,10 @@ import { todayStr, normalizeActivity, weeklyGoal } from '../data';
 
 // ── Push: write local Zustand state to Supabase ───────────────────────────────
 
+// Every write below ends in .throwOnError(). By default the Supabase client turns
+// a failed request (incl. a dropped connection) into a quiet { error } instead of
+// throwing, so a failed push used to look successful: the unsaved-changes flag was
+// cleared and the next pull overwrote newer local data with the older cloud copy.
 export async function pushAllData(userId, rawState) {
   // Bail if session is expired or belongs to a different user.
   // Try a refresh first — a transient/expired token shouldn't silently drop a push.
@@ -28,7 +32,7 @@ export async function pushAllData(userId, rawState) {
   await Promise.all([
     pushPreferences(userId, state),
     pushActivities(userId, state.activities),
-    pushLogs(userId, state.logs),
+    pushLogs(userId, state.logs, state.activities),
     pushTags(userId, state.tags),
     pushTasks(userId, state.tasks),
     pushCheckIns(userId, state.checkIns),
@@ -181,7 +185,7 @@ async function pushPreferences(userId, state) {
     week_start_day: state.weekStartDay,
     ui_prefs: state.uiPrefs,
     updated_at: new Date().toISOString(),
-  }, { onConflict: 'user_id' });
+  }, { onConflict: 'user_id' }).throwOnError();
 }
 
 async function pullPreferences(userId) {
@@ -232,20 +236,18 @@ async function pushActivities(userId, activities) {
       created_at: a.createdAt || '2020-01-01',
       updated_at: new Date().toISOString(),
     }));
-    const { error } = await supabase.from('activities').upsert(payload, { onConflict: 'user_id,id' });
-    if (error) captureError(new Error(error.message), { context: 'pushActivities' });
+    await supabase.from('activities').upsert(payload, { onConflict: 'user_id,id' }).throwOnError();
 
     // Delete cloud records that were removed locally
     const localIds = valid.map(a => a.id);
-    const { error: delError } = await supabase
+    await supabase
       .from('activities')
       .delete()
       .eq('user_id', userId)
-      .not('id', 'in', `(${localIds.join(',')})`);
-    if (delError) captureError(new Error(delError.message), { context: 'pushActivities.delete' });
+      .not('id', 'in', `(${localIds.join(',')})`).throwOnError();
   } else {
     // All activities deleted locally — clear cloud too
-    await supabase.from('activities').delete().eq('user_id', userId);
+    await supabase.from('activities').delete().eq('user_id', userId).throwOnError();
   }
 }
 
@@ -282,16 +284,20 @@ async function pullActivities(userId) {
 // ── Logs ──────────────────────────────────────────────────────────────────────
 // logs shape: { activityId: { dateStr: count } }
 
-async function pushLogs(userId, logs) {
+async function pushLogs(userId, logs, activities = []) {
   if (!logs) return;
+  // Logs of a habit that no longer exists can never be saved (logs -> activities
+  // foreign key) and would fail the whole batch on every push, so skip them.
+  const known = new Set(activities.map(a => a.id));
   const rows = [];
   Object.entries(logs).forEach(([activityId, dateCounts]) => {
+    if (!known.has(activityId)) return;
     Object.entries(dateCounts).forEach(([logDate, count]) => {
       if (count > 0) rows.push({ user_id: userId, activity_id: activityId, log_date: logDate, count });
     });
   });
   if (!rows.length) return;
-  await supabase.from('logs').upsert(rows, { onConflict: 'user_id,activity_id,log_date' });
+  await supabase.from('logs').upsert(rows, { onConflict: 'user_id,activity_id,log_date' }).throwOnError();
 }
 
 async function pullLogs(userId) {
@@ -331,19 +337,18 @@ async function pushTags(userId, tags) {
         sort_order: i,
       })),
       { onConflict: 'user_id,id' }
-    );
+    ).throwOnError();
 
     // Delete cloud records that were removed locally
     const localIds = valid.map(t => t.id);
-    const { error: delError } = await supabase
+    await supabase
       .from('tags')
       .delete()
       .eq('user_id', userId)
-      .not('id', 'in', `(${localIds.join(',')})`);
-    if (delError) captureError(new Error(delError.message), { context: 'pushTags.delete' });
+      .not('id', 'in', `(${localIds.join(',')})`).throwOnError();
   } else {
     // All tags deleted locally — clear cloud too
-    await supabase.from('tags').delete().eq('user_id', userId);
+    await supabase.from('tags').delete().eq('user_id', userId).throwOnError();
   }
 }
 
@@ -368,7 +373,7 @@ async function pushTasks(userId, tasks) {
   });
 
   if (valid.length > 0) {
-    const { error } = await supabase.from('tasks').upsert(
+    await supabase.from('tasks').upsert(
       valid.map(t => ({
         id: t.id,
         user_id: userId,
@@ -386,20 +391,18 @@ async function pushTasks(userId, tasks) {
         updated_at: new Date().toISOString(),
       })),
       { onConflict: 'user_id,id' }
-    );
-    if (error) captureError(new Error(error.message), { context: 'pushTasks' });
+    ).throwOnError();
 
     // Delete cloud records that were removed locally
     const localIds = valid.map(t => t.id);
-    const { error: delError } = await supabase
+    await supabase
       .from('tasks')
       .delete()
       .eq('user_id', userId)
-      .not('id', 'in', `(${localIds.join(',')})`);
-    if (delError) captureError(new Error(delError.message), { context: 'pushTasks.delete' });
+      .not('id', 'in', `(${localIds.join(',')})`).throwOnError();
   } else {
     // All tasks deleted locally — clear cloud too
-    await supabase.from('tasks').delete().eq('user_id', userId);
+    await supabase.from('tasks').delete().eq('user_id', userId).throwOnError();
   }
 }
 
@@ -436,7 +439,7 @@ async function pushCheckIns(userId, checkIns) {
     notes: data.notes || null,
   }));
   if (!rows.length) return;
-  await supabase.from('check_ins').upsert(rows, { onConflict: 'user_id,check_in_date' });
+  await supabase.from('check_ins').upsert(rows, { onConflict: 'user_id,check_in_date' }).throwOnError();
 }
 
 async function pullCheckIns(userId) {
@@ -464,7 +467,7 @@ async function pushJournalPrompts(userId, prompts) {
       sort_order: i,
     })),
     { onConflict: 'user_id,id' }
-  );
+  ).throwOnError();
 }
 
 async function pullJournalPrompts(userId) {
@@ -488,7 +491,7 @@ async function pushJournalEntries(userId, entries) {
     });
   });
   if (!rows.length) return;
-  await supabase.from('journal_entries').upsert(rows, { onConflict: 'user_id,entry_date,prompt_id' });
+  await supabase.from('journal_entries').upsert(rows, { onConflict: 'user_id,entry_date,prompt_id' }).throwOnError();
 }
 
 async function pullJournalEntries(userId) {
@@ -513,7 +516,7 @@ async function pushWellbeingNotes(userId, notes) {
     .filter(([, text]) => text)
     .map(([date, text]) => ({ user_id: userId, note_date: date, text }));
   if (!rows.length) return;
-  await supabase.from('wellbeing_notes').upsert(rows, { onConflict: 'user_id,note_date' });
+  await supabase.from('wellbeing_notes').upsert(rows, { onConflict: 'user_id,note_date' }).throwOnError();
 }
 
 async function pullWellbeingNotes(userId) {
@@ -543,7 +546,7 @@ async function pushLibrary(userId, library) {
       date_completed: e.dateCompleted || null,
     })),
     { onConflict: 'user_id,id' }
-  );
+  ).throwOnError();
 }
 
 async function pullLibrary(userId) {
@@ -567,7 +570,7 @@ async function pushNotifications(userId, notifications) {
       id: n.id, user_id: userId, time: n.time, message: n.message, enabled: n.enabled,
     })),
     { onConflict: 'user_id,id' }
-  );
+  ).throwOnError();
 }
 
 async function pullNotifications(userId) {
@@ -587,7 +590,7 @@ async function pushDailyDrafts(userId, drafts) {
     user_id: userId, draft_date: date, book: d.book, audio: d.audio, notes: d.notes,
   }));
   if (!rows.length) return;
-  await supabase.from('daily_drafts').upsert(rows, { onConflict: 'user_id,draft_date' });
+  await supabase.from('daily_drafts').upsert(rows, { onConflict: 'user_id,draft_date' }).throwOnError();
 }
 
 async function pullDailyDrafts(userId) {
@@ -609,7 +612,7 @@ async function pushDailyMessageDefaults(userId, defaults) {
   await supabase.from('daily_message_defaults').upsert(
     { user_id: userId, book: defaults?.book || '', notes: defaults?.notes || '', updated_at: new Date().toISOString() },
     { onConflict: 'user_id' }
-  );
+  ).throwOnError();
 }
 
 async function pullDailyMessageDefaults(userId) {
@@ -629,7 +632,7 @@ async function pushCustomEmotions(userId, emotions) {
   await supabase.from('custom_emotions').upsert(
     emotions.map(e => ({ id: e.id, user_id: userId, label: e.label, emoji: e.emoji })),
     { onConflict: 'user_id,id' }
-  );
+  ).throwOnError();
 }
 
 async function pullCustomEmotions(userId) {
@@ -647,7 +650,7 @@ async function pushRewardMilestones(userId, milestone) {
   await supabase.from('reward_milestones').upsert(
     { user_id: userId, config: milestone, updated_at: new Date().toISOString() },
     { onConflict: 'user_id' }
-  );
+  ).throwOnError();
 }
 
 async function pullRewardMilestones(userId) {
@@ -666,7 +669,7 @@ async function pushMilestoneSeen(userId, seen) {
   await supabase.from('milestone_seen').upsert(
     { user_id: userId, data: seen, updated_at: new Date().toISOString() },
     { onConflict: 'user_id' }
-  );
+  ).throwOnError();
 }
 
 async function pullMilestoneSeen(userId) {

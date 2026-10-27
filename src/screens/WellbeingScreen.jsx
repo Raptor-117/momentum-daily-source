@@ -820,6 +820,27 @@ function LibraryCard({ entry, theme, editingId, setEditingId, confirmDelId, setC
 
   const saveTimerRef  = useRef(null);
   const flashTimerRef = useRef(null);
+  const pendingRef    = useRef(null); // args of a typed change not yet written to the store
+  const flushRef      = useRef(null);
+
+  // Start every edit from the current saved version. These fields used to be set
+  // only when the card first mounted, so after a cloud refresh the editor showed
+  // stale notes and autosave wrote them back over the newer ones.
+  useEffect(() => {
+    if (!isEditing) return;
+    setLocalTitle(entry.title || '');
+    setLocalAuthor(entry.author || '');
+    setLocalNotes(entry.notes || '');
+    setLocalStatus(entry.status || 'reading');
+  }, [isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Write any pending change when the app is backgrounded or the card unmounts,
+  // so closing the app within the autosave delay doesn't drop the last edit.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') flushRef.current?.(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => { document.removeEventListener('visibilitychange', onHide); flushRef.current?.(); };
+  }, []);
 
   function doSave(title, author, notes, status) {
     if (!title.trim()) return;
@@ -834,9 +855,18 @@ function LibraryCard({ entry, theme, editingId, setEditingId, confirmDelId, setC
     flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1500);
   }
 
-  function scheduleAutoSave(title, author, notes, status) {
+  function flushPending() {
     clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => doSave(title, author, notes, status), 700);
+    const args = pendingRef.current;
+    pendingRef.current = null;
+    if (args) doSave(...args);
+  }
+  flushRef.current = flushPending;
+
+  function scheduleAutoSave(title, author, notes, status) {
+    pendingRef.current = [title, author, notes, status];
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(flushPending, 700);
   }
 
   function handleTitleChange(v)  { setLocalTitle(v);  scheduleAutoSave(v, localAuthor, localNotes, localStatus); }
@@ -844,11 +874,14 @@ function LibraryCard({ entry, theme, editingId, setEditingId, confirmDelId, setC
   function handleNotesChange(v)  { setLocalNotes(v);  scheduleAutoSave(localTitle, localAuthor, v, localStatus); }
   function handleStatusChange(v) {
     setLocalStatus(v);
-    doSave(localTitle, localAuthor, localNotes, v); // immediate on toggle
+    clearTimeout(saveTimerRef.current); // a pending typed save would revert the status
+    pendingRef.current = null;
+    doSave(localTitle, localAuthor, localNotes, v); // immediate on toggle (includes current text)
   }
 
   function handleDone() {
     clearTimeout(saveTimerRef.current);
+    pendingRef.current = null;
     doSave(localTitle, localAuthor, localNotes, localStatus);
     setEditingId(null);
     setConfirmDelId(null);
