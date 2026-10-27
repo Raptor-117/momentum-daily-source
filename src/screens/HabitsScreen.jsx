@@ -54,6 +54,7 @@ function DayPicker({ selected = [], onChange, theme }) {
 }
 
 const UNIT_SHORT = { daily: '/day', weekly: '/wk', monthly: '/mo' };
+const FILTER_CADENCE = { Daily: 'daily', Weekly: 'weekly', Monthly: 'monthly', Log: 'log' };
 
 function CadencePicker({ value, onChange, theme }) {
   return (
@@ -225,8 +226,8 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
 
             <div className={`flex items-center justify-between px-2 py-2 rounded-lg ${theme.progressBg}`}>
               <div>
-                <p className={`text-xs font-medium ${theme.text}`}>Daily accountability</p>
-                <p className={`text-xs ${theme.muted}`}>{activity.accountability ? 'Shown in daily message' : 'Not in daily message'}</p>
+                <p className={`text-xs font-medium ${theme.text}`}>In daily message</p>
+                <p className={`text-xs ${theme.muted}`}>{activity.accountability ? 'Included — card gets a purple edge' : 'Not included'}</p>
               </div>
               <button
                 onClick={() => updateActivity(activity.id, { accountability: !activity.accountability })}
@@ -306,7 +307,12 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
   const schedLabel = scheduledLabel(activity.scheduledDays);
 
   return (
-    <div className={`rounded-xl p-3 mb-2 shadow-sm border ${theme.card} ${theme.cardBorder}`}>
+    <div
+      className={`rounded-xl p-3 mb-2 shadow-sm border ${theme.card} ${theme.cardBorder}`}
+      // Purple inner stripe = in the daily accountability message. Inset shadow, not a
+      // thicker border, so card contents stay aligned with the other cards.
+      style={activity.accountability ? { boxShadow: 'inset 4px 0 0 #8b5cf6, 0 1px 2px 0 rgb(0 0 0 / 0.05)' } : undefined}
+    >
       <div className="flex items-center gap-2">
         <span className="text-xl flex-shrink-0">{activity.emoji}</span>
         <div className="flex-1 min-w-0">
@@ -320,18 +326,14 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
           {!dueToday && schedLabel && (
             <p className={`text-xs mt-0.5 ${theme.muted}`}>📅 Scheduled: {schedLabel}</p>
           )}
-          {(activity.accountability || (activity.tags || []).length > 0) && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {activity.accountability && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-violet-100 text-violet-700 leading-none">
-                  Daily
-                </span>
-              )}
-              {allTags.filter(t => (activity.tags || []).includes(t.id)).map(t => (
-                <TagPill key={t.id} tagId={t.id} allTags={allTags} />
-              ))}
-            </div>
-          )}
+          <div className="flex flex-wrap gap-1 mt-1">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none ${theme.progressBg} ${theme.textSub}`}>
+              {CADENCES.find(c => c.id === activity.cadence)?.tag}
+            </span>
+            {allTags.filter(t => (activity.tags || []).includes(t.id)).map(t => (
+              <TagPill key={t.id} tagId={t.id} allTags={allTags} />
+            ))}
+          </div>
         </div>
 
         {streak > 0 && (
@@ -424,8 +426,8 @@ function AddHabitForm({ allTags, theme, onSave, onCancel }) {
         />
         <div className={`flex items-center justify-between px-2 py-2 rounded-lg ${theme.progressBg}`}>
           <div>
-            <p className={`text-xs font-medium ${theme.text}`}>Daily accountability</p>
-            <p className={`text-xs ${theme.muted}`}>{form.accountability ? 'Shown in daily message' : 'Not in daily message'}</p>
+            <p className={`text-xs font-medium ${theme.text}`}>In daily message</p>
+            <p className={`text-xs ${theme.muted}`}>{form.accountability ? 'Included — card gets a purple edge' : 'Not included'}</p>
           </div>
           <button onClick={() => setForm(f => ({ ...f, accountability: !f.accountability }))}
             className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${form.accountability ? theme.toggleOn : theme.toggleOff}`}>
@@ -552,7 +554,8 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
   const [filterOpen,       setFilterOpen]       = useState(false);
 
   const habitPrefs = uiPrefs?.habits || {};
-  const filterStatuses = habitPrefs.filterStatuses || [];
+  // Saved filters may name options that were renamed ("No target") — ignore those.
+  const filterStatuses = (habitPrefs.filterStatuses || []).filter(s => FILTER_CADENCE[s] !== undefined || ['Achieved', 'Behind', 'In daily message'].includes(s));
   const filterTags     = habitPrefs.filterTags     || [];
   function setFilterStatuses(val) { setUiPref('habits', 'filterStatuses', typeof val === 'function' ? val(filterStatuses) : val); }
   function setFilterTags(val)     { setUiPref('habits', 'filterTags',     typeof val === 'function' ? val(filterTags) : val); }
@@ -724,7 +727,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
     });
   }
 
-  const statusOptions = ['Achieved', 'Behind', 'No target', 'Daily'];
+  const statusOptions = ['Achieved', 'Behind', 'Daily', 'Weekly', 'Monthly', 'Log', 'In daily message'];
   const tagOptions    = tags.map(t => t.label);
 
   function toggleStatus(opt) {
@@ -746,10 +749,10 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
     if (filterStatuses.length > 0) {
       const wt = getWeeklyTotal(a.id, weekStart);
       const match =
-        (filterStatuses.includes('No target') && !a.hasTarget) ||
+        filterStatuses.some(s => FILTER_CADENCE[s] === a.cadence) ||
         (filterStatuses.includes('Achieved')  && weeklyGoal(a) != null && wt >= weeklyGoal(a)) ||
         (filterStatuses.includes('Behind')    && weeklyGoal(a) != null && wt < weeklyGoal(a)) ||
-        (filterStatuses.includes('Daily')     && !!a.accountability);
+        (filterStatuses.includes('In daily message') && !!a.accountability);
       if (!match) return false;
     }
     if (filterTags.length > 0) {

@@ -36,10 +36,10 @@ export const DEFAULT_ACTIVITIES = [
 // `target` is in the cadence's unit: per day / per week / per month. Log habits
 // have no target. `hasTarget` is kept (derived) because existing views use it.
 export const CADENCES = [
-  { id: 'daily',   label: 'Daily',    unit: 'day' },
-  { id: 'weekly',  label: 'Weekly',   unit: 'week' },
-  { id: 'monthly', label: 'Monthly',  unit: 'month' },
-  { id: 'log',     label: 'Log only', unit: null },
+  { id: 'daily',   label: 'Daily',    unit: 'day',   tag: '☀️ Daily' },
+  { id: 'weekly',  label: 'Weekly',   unit: 'week',  tag: '📅 Weekly' },
+  { id: 'monthly', label: 'Monthly',  unit: 'month', tag: '🗓️ Monthly' },
+  { id: 'log',     label: 'Log only', unit: null,    tag: '📝 Log' },
 ];
 
 // Pre-cadence habits only had a weekly target. Classify them: 7/week = daily,
