@@ -3,6 +3,7 @@ export function getTheme(isDark) {
     bg:             'bg-gray-900',
     card:           'bg-gray-800',
     cardBorder:     'border-gray-700',
+    stripe:         '#a78bfa', // daily-message habit edge (violet-400)
     text:           'text-gray-100',
     textSub:        'text-gray-300',
     muted:          'text-gray-500',
@@ -46,6 +47,7 @@ export function getTheme(isDark) {
     bg:             'bg-[#f4f5f7]',
     card:           'bg-white',
     cardBorder:     'border-gray-100',
+    stripe:         '#6d28d9', // daily-message habit edge (violet-700)
     text:           'text-gray-900',
     textSub:        'text-gray-700',
     muted:          'text-gray-400',

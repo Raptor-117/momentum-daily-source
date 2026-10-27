@@ -311,7 +311,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
       className={`rounded-xl p-3 mb-2 shadow-sm border ${theme.card} ${theme.cardBorder}`}
       // Purple inner stripe = in the daily accountability message. Inset shadow, not a
       // thicker border, so card contents stay aligned with the other cards.
-      style={activity.accountability ? { boxShadow: 'inset 4px 0 0 #8b5cf6, 0 1px 2px 0 rgb(0 0 0 / 0.05)' } : undefined}
+      style={activity.accountability ? { boxShadow: `inset 4px 0 0 ${theme.stripe}, 0 1px 2px 0 rgb(0 0 0 / 0.05)` } : undefined}
     >
       <div className="flex items-center gap-2">
         <span className="text-xl flex-shrink-0">{activity.emoji}</span>
