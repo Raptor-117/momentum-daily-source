@@ -37,6 +37,7 @@ class AppErrorBoundary extends Component {
 export default function App() {
   const defaultTab = useStore(s => s.defaultTab) || 'habits';
   const [tab, setTab]                 = useState(defaultTab);
+  const [settingsFocus, setSettingsFocus] = useState(null); // e.g. 'scoring' from the Tracker colour key
   const [showAuth, setShowAuth]       = useState(false);
   const [authUser, setAuthUser]       = useState(null);
   const [syncing, setSyncing]         = useState(false);
@@ -430,7 +431,7 @@ export default function App() {
       >
         {tab === 'habits'    && <HabitsScreen        theme={theme} gamify={gamify} onNavigate={setTab} />}
         {tab === 'tasks'     && <TasksScreen          theme={theme} gamify={gamify} />}
-        {tab === 'tracker'   && <CalendarStatsScreen  theme={theme} gamify={gamify} />}
+        {tab === 'tracker'   && <CalendarStatsScreen  theme={theme} gamify={gamify} onShowScoringHelp={() => { setSettingsFocus('scoring'); setTab('settings'); }} />}
         {tab === 'wellbeing' && <WellbeingScreen      theme={theme} gamify={gamify} />}
         {tab === 'settings'  && (
           <SettingsScreen
@@ -442,6 +443,8 @@ export default function App() {
             onPushToCloud={handlePushToCloud}
             onPullFromCloud={handlePullFromCloud}
             onDeleteAccount={handleDeleteAccount}
+            focus={settingsFocus}
+            onFocusHandled={() => setSettingsFocus(null)}
           />
         )}
       </div>

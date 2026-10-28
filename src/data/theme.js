@@ -35,6 +35,21 @@ export function getTheme(isDark) {
     complexityCritical: 'bg-red-900/40 text-red-400',
     toggleOn:       'bg-blue-600',
     toggleOff:      'bg-gray-600',
+    // Tracker bands (data/scoring.js): calendar day fill, and the score pill
+    band: {
+      'Excellent':         'bg-green-600 text-white',
+      'Good':              'bg-lime-600 text-white',
+      'Average':           'bg-amber-700 text-white',
+      'Needs Improvement': 'bg-rose-800 text-rose-100',
+    },
+    bandPill: {
+      'Excellent':         'bg-green-900/60 text-green-200',
+      'Good':              'bg-lime-900/60 text-lime-200',
+      'Average':           'bg-amber-900/60 text-amber-200',
+      'Needs Improvement': 'bg-rose-900/60 text-rose-200',
+    },
+    calWeeklyOnly:  'bg-gray-800/60 text-gray-500',
+    goalTick:       'bg-gray-100',
     cal: [
       'bg-gray-800 text-gray-600',
       'bg-red-700 text-red-200',
@@ -79,6 +94,20 @@ export function getTheme(isDark) {
     complexityCritical: 'bg-red-100 text-red-700',
     toggleOn:       'bg-blue-600',
     toggleOff:      'bg-gray-300',
+    band: {
+      'Excellent':         'bg-green-500 text-white',
+      'Good':              'bg-lime-300 text-lime-950',
+      'Average':           'bg-amber-300 text-amber-950',
+      'Needs Improvement': 'bg-rose-200 text-rose-900',
+    },
+    bandPill: {
+      'Excellent':         'bg-green-100 text-green-800',
+      'Good':              'bg-lime-100 text-lime-800',
+      'Average':           'bg-amber-100 text-amber-800',
+      'Needs Improvement': 'bg-rose-100 text-rose-800',
+    },
+    calWeeklyOnly:  'bg-gray-50 text-gray-300',
+    goalTick:       'bg-gray-800',
     cal: [
       'bg-gray-100 text-gray-400',
       'bg-red-400 text-white',

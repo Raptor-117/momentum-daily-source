@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor,
   KeyboardSensor, useSensor, useSensors, DragOverlay,
@@ -10,6 +10,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
 import { todayStr } from '../data';
+import { BANDS } from '../data/scoring';
 
 // ─── Tag colour presets ───────────────────────────────────────────────────────
 const PRESET_COLORS = [
@@ -818,8 +819,73 @@ function DailyMessageSection({ theme }) {
   );
 }
 
+// ─── Tracker: goal % + how scoring works ──────────────────────────────────────
+function TrackerSection({ theme, focus, onFocusHandled }) {
+  const { uiPrefs, setUiPref } = useStore();
+  const goal = uiPrefs?.tracker?.goalPct ?? 70;
+  const [helpOpen, setHelpOpen] = useState(focus === 'scoring');
+  const ref = useRef(null);
+
+  // Opened from the Tracker's colour key: expand and scroll here.
+  useEffect(() => {
+    if (focus !== 'scoring') return;
+    setHelpOpen(true);
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    onFocusHandled?.();
+  }, [focus]);
+
+  const H = ({ children }) => <p className={`text-xs font-bold mt-3 mb-1 ${theme.text}`}>{children}</p>;
+  const P = ({ children }) => <p className={`text-xs leading-relaxed ${theme.textSub}`}>{children}</p>;
+
+  return (
+    <div className="mb-6" ref={ref}>
+      <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>Tracker</p>
+      <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
+        <div className="flex items-center justify-between px-3 py-3">
+          <div>
+            <p className={`text-sm font-medium ${theme.text}`}>Goal</p>
+            <p className={`text-xs ${theme.muted}`}>Your target score, shown as the tick on each bar</p>
+          </div>
+          <select
+            value={goal}
+            onChange={e => setUiPref('tracker', 'goalPct', Number(e.target.value))}
+            className={`text-sm px-3 py-1.5 rounded-lg border outline-none ${theme.select}`}
+          >
+            {Array.from({ length: 19 }, (_, i) => 10 + i * 5).map(v => <option key={v} value={v}>{v}%</option>)}
+          </select>
+        </div>
+        <div className={`border-t ${theme.divider}`} />
+        <button onClick={() => setHelpOpen(o => !o)} className="flex items-center justify-between w-full px-3 py-3">
+          <p className={`text-sm font-medium ${theme.text}`}>How scoring works</p>
+          <span className={`text-xs ${theme.muted}`}>{helpOpen ? '▾' : '▸'}</span>
+        </button>
+        {helpOpen && (
+          <div className="px-3 pb-3">
+            <P>Each habit is worth 1 point per week or month. Partly done earns part of the point: Exercise 3 of 4 = 0.75. Your score is points earned ÷ habits scored. Log-only habits and tasks don't count.</P>
+            <H>Bands</H>
+            {BANDS.map((b, i) => (
+              <div key={b.label} className="flex items-center gap-2 py-0.5">
+                <span className={`w-3 h-3 rounded-sm ${theme.band[b.label].split(' ')[0]}`} />
+                <span className={`text-xs w-16 tabular-nums ${theme.text}`}>{b.min}–{i ? BANDS[i - 1].min - 1 : 100}%</span>
+                <span className={`text-xs ${theme.muted}`}>{b.label}</span>
+              </div>
+            ))}
+            <H>Your goal</H>
+            <P>A personal target on top of the bands. The bars show a tick at it, and "to go" until you reach it.</P>
+            <H>This week vs last week</H>
+            <P>The current week and month are scored "so far", up to today, so ▲/▼ compares fairly with the last full one.</P>
+            <H>Calendar</H>
+            <P>Each day is coloured by its daily habits; rest days don't count against you, and today stays grey until you log something. A dot means a weekly or monthly habit was logged that day. Days before 6 May 2026 are greyed: those are imported weekly totals, so only week and month scores apply.</P>
+            <P>⭐ every daily habit done · 😌 check-in (your first mood) · 📖 journal · 📝 notes · ✅ tasks completed</P>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
-export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, onSignOut, onPushToCloud, onPullFromCloud, onDeleteAccount }) {
+export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, onSignOut, onPushToCloud, onPullFromCloud, onDeleteAccount, focus, onFocusHandled }) {
   const { darkMode, toggleDarkMode, gamify, toggleGameify, weekStartDay, setWeekStartDay, defaultTab, setDefaultTab } = useStore();
   const [updateStatus,   setUpdateStatus]   = useState('idle'); // idle | checking | updated | uptodate
   const [deleteConfirm,  setDeleteConfirm]  = useState(false);
@@ -1052,6 +1118,9 @@ export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, o
           </div>
         </div>
       </div>
+
+      {/* ── Tracker ── */}
+      <TrackerSection theme={theme} focus={focus} onFocusHandled={onFocusHandled} />
 
       {/* ── Tags ── */}
       <TagManager theme={theme} />

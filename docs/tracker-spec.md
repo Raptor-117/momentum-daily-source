@@ -148,6 +148,22 @@ Each phase ships to dev for testing before prod.
      (user confirmed April 2026 was genuinely untracked and 0% is fine).
    - In the cutover week/month, daily habits are only "due" from 6 May.
 
+4. **Tracker page** (decided 2026-10-28): Calendar + Stats merge into one Tracker
+   view; Logs stays a second tab.
+   - Day colours = one colour per band. Today stays neutral until something is
+     logged; days before the cutover are greyed.
+   - Day markers: the emoji stay (⭐ now means day score 100%), plus a dot when a
+     weekly or monthly habit was logged.
+   - Score cards: week (follows the tapped day), month and year (follow the
+     calendar page). Each has the band, a goal tick, ▲/▼ vs the previous period
+     (week and month), category lines and total points. Current periods are
+     scored "so far" (up to today).
+   - The old Stats parts live in each card's "Show habits": the habit tables,
+     Share and CSV export. The year card always shows month bars. The averages
+     list was dropped.
+   - Goal % is in Settings › Tracker (`uiPrefs.tracker.goalPct`, default 70),
+     with the "How scoring works" explainer. The calendar's colour key opens it.
+
 ## Sequencing
 
 Recommended (awaiting user confirmation): Tracker first, then per-item ("only

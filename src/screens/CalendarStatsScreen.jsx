@@ -4,6 +4,7 @@ import {
   todayStr, toDateStr, getWeekStart, getWeekDays, getCalendarMonthChunks,
   getDayLabels, MONTH_NAMES, MONTH_NAMES_FULL, weeklyGoal,
 } from '../data';
+import { scorePeriod, monthDays, BANDS } from '../data/scoring';
 
 // ─── Shared emotion map ───────────────────────────────────────────────────────
 const PRESET_EMOTION_EMOJI = {
@@ -28,7 +29,7 @@ function exportCSV(filename, rows) {
 }
 
 // ─── Calendar heatmap ─────────────────────────────────────────────────────────
-function CalendarView({ theme, gamify }) {
+function CalendarView({ theme, gamify, onShowScoringHelp }) {
   const { activities, logs, checkIns, journalEntries, journalPrompts, wellbeingNotes, tasks, logActivity, setLogCount, customEmotions } = useStore();
   const EMOTION_EMOJI = buildEmotionMap(customEmotions);
   const now          = new Date();
@@ -48,28 +49,16 @@ function CalendarView({ theme, gamify }) {
     else setViewMonth(m => m + 1);
   }
 
-  // Only count habits that existed on dateStr (no createdAt = original/default habit, always eligible)
-  function eligibleActivities(dateStr) {
-    return activities.filter(a => !a.archived && (!a.createdAt || a.createdAt <= dateStr));
+  // Day colour = band of the daily-habit score (tracker-spec §3). Today stays neutral
+  // until something is logged; days before daily logging are greyed.
+  function dayFill(dateStr, score) {
+    if (score.weeklyDataOnly) return theme.calWeeklyOnly;
+    if (score.pct == null || (dateStr === todayDateStr && score.pct === 0)) return theme.cal[0];
+    return theme.band[score.band];
   }
-
-  function getIntensity(dateStr) {
-    const eligible = eligibleActivities(dateStr);
-    if (!eligible.length) return 0;
-    const active = eligible.filter(a => (logs[a.id] || {})[dateStr] > 0).length;
-    if (!active) return 0;
-    const pct = active / eligible.length;
-    if (pct < 0.25) return 1;
-    if (pct < 0.50) return 2;
-    if (pct < 0.75) return 3;
-    return 4;
-  }
-
-  function isPerfectDay(dateStr) {
-    const goalActivities = eligibleActivities(dateStr).filter(a => a.hasTarget);
-    if (goalActivities.length === 0) return false;
-    return goalActivities.every(a => (logs[a.id] || {})[dateStr] > 0);
-  }
+  // Daily habits show in the colour; the dot marks weekly/monthly habit logs.
+  const loggedNonDaily = (dateStr) =>
+    activities.some(a => (a.cadence === 'weekly' || a.cadence === 'monthly') && (logs[a.id] || {})[dateStr] > 0);
 
   const firstDow    = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -106,14 +95,15 @@ function CalendarView({ theme, gamify }) {
         {cells.map((day, i) => {
           if (!day) return <div key={`e-${i}`} />;
           const dateStr    = toDateStr(new Date(viewYear, viewMonth, day));
-          const intensity  = getIntensity(dateStr);
           const isFuture   = dateStr > todayDateStr;
+          const score      = isFuture ? null : scorePeriod(activities, logs, [dateStr], 'day');
           const isToday    = dateStr === todayDateStr;
           const isSel      = dateStr === selDay;
           const hasCheckIn  = !isFuture && !!checkIns[dateStr];
           const hasJournal  = !isFuture && !!(journalEntries[dateStr] && Object.values(journalEntries[dateStr]).some(v => v?.trim()));
           const hasNotes    = !isFuture && !!(wellbeingNotes[dateStr]?.trim());
-          const perfect     = !isFuture && isPerfectDay(dateStr);
+          const perfect     = !isFuture && score.pct === 100;
+          const dot         = !isFuture && loggedNonDaily(dateStr);
           const tasksDone   = !isFuture ? (tasks || []).filter(t => t.completedDate === dateStr).length : 0;
 
           return (
@@ -122,12 +112,13 @@ function CalendarView({ theme, gamify }) {
               onClick={() => { if (!isFuture) { setSelDay(isSel ? null : dateStr); setEditingDay(false); setJournalOpen(false); } }}
               disabled={isFuture}
               className={`min-h-[40px] w-full rounded-lg flex flex-col items-center justify-center py-1 text-xs font-semibold transition-all relative
-                ${isFuture ? (theme.bg + ' ' + theme.muted + ' cursor-default') : theme.cal[intensity]}
+                ${isFuture ? (theme.bg + ' ' + theme.muted + ' cursor-default') : dayFill(dateStr, score)}
                 ${isToday  ? 'ring-2 ring-blue-500 ring-offset-1' : ''}
                 ${isSel    ? 'ring-2 ring-violet-500 ring-offset-1' : ''}
               `}
             >
               <span className="leading-none">{day}</span>
+              {dot && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-current opacity-70" />}
               {(perfect || hasCheckIn || hasJournal || hasNotes || tasksDone > 0) && (
                 <div className="flex flex-wrap gap-0.5 mt-0.5 items-center justify-center w-full px-0.5">
                   {perfect    && <span className="text-[9px] leading-none">{gamify ? '🚀' : '⭐'}</span>}
@@ -145,47 +136,15 @@ function CalendarView({ theme, gamify }) {
         })}
       </div>
 
-      {/* Legend */}
-      <div className={`rounded-xl p-3 mb-3 border ${theme.card} ${theme.cardBorder}`}>
-        <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${theme.muted}`}>What the colours mean</p>
-        <div className="flex items-center gap-2 mb-2.5">
-          {[
-            { label: 'None', desc: '0%' },
-            { label: '<25%', desc: '1–24%' },
-            { label: '<50%', desc: '25–49%' },
-            { label: '<75%', desc: '50–74%' },
-            { label: '75%+', desc: '75–100%' },
-          ].map(({ label, desc }, i) => (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <div className={`w-full h-5 rounded ${theme.cal[i].split(' ')[0]}`} />
-              <span className={`text-[9px] leading-none ${theme.muted}`}>{label}</span>
-            </div>
-          ))}
-        </div>
-        <p className={`text-[10px] mb-1.5 ${theme.muted}`}>Colour = % of habits completed that day</p>
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] leading-none">{gamify ? '🚀' : '⭐'}</span>
-            <span className={`text-[10px] ${theme.muted}`}>{gamify ? 'All quests done' : 'Perfect day — all habits hit'}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] leading-none">😌</span>
-            <span className={`text-[10px] ${theme.muted}`}>Check-in logged</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] leading-none">📖</span>
-            <span className={`text-[10px] ${theme.muted}`}>Journal written</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] leading-none">📝</span>
-            <span className={`text-[10px] ${theme.muted}`}>Notes saved</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] leading-none font-bold text-green-600">✅</span>
-            <span className={`text-[10px] ${theme.muted}`}>Tasks completed</span>
-          </div>
-        </div>
-      </div>
+      {/* Colour key — full explanation lives in Settings › Tracker */}
+      <button onClick={onShowScoringHelp} className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3 px-1 text-left">
+        {BANDS.map(b => (
+          <span key={b.label} className={`flex items-center gap-1 text-[10px] ${theme.muted}`}>
+            <span className={`w-2.5 h-2.5 rounded-sm ${theme.band[b.label].split(' ')[0]}`} />{b.label}
+          </span>
+        ))}
+        <span className={`text-[10px] ${theme.muted}`}>• weekly/monthly logged · ⓘ</span>
+      </button>
 
       {/* Selected day breakdown */}
       {selDay && (
@@ -324,6 +283,8 @@ function CalendarView({ theme, gamify }) {
           })()}
         </div>
       )}
+
+      <TrackerScores theme={theme} selDay={selDay || todayDateStr} year={viewYear} month={viewMonth} />
     </div>
   );
 }
@@ -520,22 +481,117 @@ function getWeekOfYear(dateStr) {
   return Math.floor(((d - jan1) / 86400000 + jan1.getDay()) / 7) + 1;
 }
 
-function StatsView({ theme }) {
+// ─── Score cards (tracker-spec §3) ─────────────────────────────────────────────
+const BAR = { 'Excellent': 'bg-green-500', 'Good': 'bg-lime-500', 'Average': 'bg-amber-500', 'Needs Improvement': 'bg-rose-500' };
+const fmtDay = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+
+function ScoreCard({ theme, title, sub, result, prev, prevLabel, goal, chart, children }) {
+  const { tags } = useStore();
+  const [open, setOpen] = useState(false);
+  const { pct, band } = result;
+  const diff = pct != null && prev?.pct != null ? pct - prev.pct : null;
+  return (
+    <div className={`rounded-xl p-3 mb-3 border shadow-sm ${theme.card} ${theme.cardBorder}`}>
+      <div className="flex items-center justify-between gap-2">
+        <p className={`text-sm font-bold ${theme.text}`}>{title} {sub && <span className={`text-xs font-normal ${theme.muted}`}>{sub}</span>}</p>
+        {pct != null && <span className={`text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${theme.bandPill[band]}`}>{pct}% · {band}</span>}
+      </div>
+      {pct == null ? (
+        <p className={`text-xs mt-1 ${theme.muted}`}>No habits scored in this period</p>
+      ) : (<>
+        <div className={`relative h-1.5 rounded-full mt-2 mb-1 ${theme.progressBg}`}>
+          <div className={`h-full rounded-full ${BAR[band]}`} style={{ width: `${pct}%` }} />
+          <div className={`absolute -top-1 w-0.5 h-3.5 ${theme.goalTick}`} style={{ left: `${goal}%` }} />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-[11px] ${theme.muted}`}>Goal {goal}% · {pct >= goal ? 'hit' : `${goal - pct}% to go`}</span>
+          {diff != null && (
+            <span className={`text-[11px] font-semibold ${diff > 0 ? 'text-green-500' : diff < 0 ? 'text-rose-500' : theme.muted}`}>
+              {diff > 0 ? '▲' : diff < 0 ? '▼' : '='} {Math.abs(diff)}% vs {prevLabel} ({prev.pct}%)
+            </span>
+          )}
+        </div>
+        <div className="mt-2 space-y-1">
+          {tags.filter(t => result.categories[t.id]).map(t => {
+            const c = result.categories[t.id];
+            return (
+              <div key={t.id} className="flex items-center justify-between text-xs">
+                <span className={theme.textSub}><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: t.color }} />{t.label}</span>
+                <span className={`tabular-nums ${theme.muted}`}>{+c.points.toFixed(1)} / {c.count} · {c.pct}%</span>
+              </div>
+            );
+          })}
+          <div className={`flex items-center justify-between text-xs pt-1 border-t ${theme.divider}`}>
+            <span className={theme.textSub}>Total</span>
+            <span className={`tabular-nums font-semibold ${theme.text}`}>{+result.points.toFixed(1)} / {result.habits.length} points</span>
+          </div>
+        </div>
+      </>)}
+      {chart}
+      {children && (<>
+        <button onClick={() => setOpen(o => !o)} className={`text-xs mt-2 font-semibold ${theme.tabActiveText}`}>{open ? 'Hide habits ▴' : 'Show habits ▾'}</button>
+        {open && <div className="mt-2">{children}</div>}
+      </>)}
+    </div>
+  );
+}
+
+// Week follows the tapped calendar day; month and year follow the calendar page.
+// The current week/month/year is scored "so far" so it compares fairly with the last.
+function TrackerScores({ theme, selDay, year, month }) {
+  const { activities, logs, weekStartDay, uiPrefs } = useStore();
+  const goal  = uiPrefs?.tracker?.goalPct ?? 70;
+  const today = todayStr();
+  const score = (days, kind) => scorePeriod(activities, logs, days.filter(d => d <= today), kind);
+  const partial = (days) => days[days.length - 1] > today ? 'so far' : '';
+
+  const ws       = getWeekStart(selDay, weekStartDay);
+  const week     = getWeekDays(ws);
+  const mDays    = monthDays(year, month);
+  const prevM    = new Date(year, month - 1, 1);
+  const months   = Array.from({ length: 12 }, (_, m) => monthDays(year, m)).filter(d => d[0] <= today);
+
+  return (<>
+    <div className="h-2" />
+    <ScoreCard theme={theme} goal={goal}
+      title={ws === getWeekStart(today, weekStartDay) ? 'This week' : `Week of ${fmtDay(ws)}`} sub={partial(week)}
+      result={score(week, 'week')} prev={score(getWeekDays(offsetDateStr(ws, -7)), 'week')} prevLabel="last week">
+      <PeriodDetail theme={theme} period="week" weekStart={ws} year={year} month={month} />
+    </ScoreCard>
+    <ScoreCard theme={theme} goal={goal}
+      title={`${MONTH_NAMES_FULL[month]} ${year}`} sub={partial(mDays)}
+      result={score(mDays, 'month')} prev={score(monthDays(prevM.getFullYear(), prevM.getMonth()), 'month')} prevLabel={MONTH_NAMES_FULL[prevM.getMonth()]}>
+      <PeriodDetail theme={theme} period="month" weekStart={ws} year={year} month={month} />
+    </ScoreCard>
+    <ScoreCard theme={theme} goal={goal} title={`${year}`} sub={months.length && months.length < 12 ? 'so far' : ''} result={score(months.flat(), 'month')} chart={
+      <div className="flex items-end gap-1 h-16 mt-3">
+        {Array.from({ length: 12 }, (_, m) => {
+          const r = m < months.length ? score(months[m], 'month') : null;
+          return (
+            <div key={m} className="flex-1 flex flex-col items-center gap-0.5 h-full justify-end">
+              <div className={`w-full rounded-sm ${r?.pct != null ? BAR[r.band] : theme.progressBg}`} style={{ height: `${Math.max(r?.pct ?? 0, 4)}%` }} />
+              <span className={`text-[9px] ${theme.muted}`}>{MONTH_NAMES[m][0]}</span>
+            </div>
+          );
+        })}
+      </div>}>
+      <PeriodDetail theme={theme} period="year" weekStart={ws} year={year} month={month} />
+    </ScoreCard>
+  </>);
+}
+
+// ─── Per-habit tables + share/export (formerly the Stats tab) ──────────────────
+function PeriodDetail({ theme, period, weekStart: viewWeekStart, year, month }) {
   const { activities, logs, weekStartDay } = useStore();
-  const [period,   setPeriod]   = useState('week');
   const today     = todayStr();
   const todayDate = new Date(today + 'T00:00:00');
-  const weekStart = getWeekStart(today, weekStartDay);
   const dayLabels = getDayLabels(weekStartDay);
-
-  const [viewWeekStart, setViewWeekStart] = useState(weekStart);
-  const isCurrentWeek = viewWeekStart === weekStart;
+  const isCurrentWeek = viewWeekStart === getWeekStart(today, weekStartDay);
   const viewWeekDays  = getWeekDays(viewWeekStart);
   const weekNum       = getWeekOfYear(viewWeekStart);
   const weekYear      = new Date(viewWeekStart + 'T00:00:00').getFullYear();
-
-  const [mDate,    setMDate]    = useState({ year: todayDate.getFullYear(), month: todayDate.getMonth() });
-  const [viewYear, setViewYear] = useState(todayDate.getFullYear());
+  const mDate    = { year, month };
+  const viewYear = year;
 
   function getCount(actId, dateStr) { return (logs[actId] || {})[dateStr] || 0; }
   function getTotal(actId, dates)   { return dates.reduce((s, d) => s + getCount(actId, d), 0); }
@@ -544,25 +600,6 @@ function StatsView({ theme }) {
   function WeekTable() {
     return (
       <div>
-        {/* Week navigator */}
-        <div className="flex items-center justify-between mb-3">
-          <button
-            onClick={() => setViewWeekStart(w => offsetDateStr(w, -7))}
-            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}
-          >◀</button>
-          <div className="text-center">
-            <span className={`text-sm font-bold ${isCurrentWeek ? theme.tabActiveText : theme.text}`}>
-              {isCurrentWeek ? 'This Week' : `Wk ${weekNum}, ${weekYear}`}
-            </span>
-            <p className={`text-[10px] mt-0.5 ${theme.muted}`}>Week {weekNum} of {weekYear}</p>
-          </div>
-          <button
-            onClick={() => setViewWeekStart(w => offsetDateStr(w, 7))}
-            disabled={isCurrentWeek}
-            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base disabled:opacity-30 ${theme.btnSecondary}`}
-          >▶</button>
-        </div>
-
         <div className="overflow-x-auto -mx-1">
           <table className="w-full text-xs min-w-[300px]">
             <thead>
@@ -611,17 +648,6 @@ function StatsView({ theme }) {
     const chunks = getCalendarMonthChunks(mDate.year, mDate.month);
     return (
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <button
-            onClick={() => setMDate(v => { const d = new Date(v.year, v.month - 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })}
-            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}
-          >◀</button>
-          <span className={`text-sm font-bold ${theme.text}`}>{MONTH_NAMES_FULL[mDate.month]} {mDate.year}</span>
-          <button
-            onClick={() => setMDate(v => { const d = new Date(v.year, v.month + 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })}
-            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}
-          >▶</button>
-        </div>
         <div className="overflow-x-auto -mx-1">
           <table className="w-full text-xs min-w-[300px]">
             <thead>
@@ -675,11 +701,6 @@ function StatsView({ theme }) {
     }
     return (
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <button onClick={() => setViewYear(v => v - 1)} className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}>◀</button>
-          <span className={`text-sm font-bold ${theme.text}`}>{viewYear}</span>
-          <button onClick={() => setViewYear(v => v + 1)} className={`w-8 h-8 flex items-center justify-center rounded-lg text-base ${theme.btnSecondary}`}>▶</button>
-        </div>
         <div className="overflow-x-auto -mx-1">
           <table className="w-full text-xs min-w-[340px]">
             <thead>
@@ -711,51 +732,6 @@ function StatsView({ theme }) {
               })}
             </tbody>
           </table>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Averages summary (always visible below table) ──
-  function AvgSummary() {
-    const chunks       = getCalendarMonthChunks(mDate.year, mDate.month);
-    const currentYear  = todayDate.getFullYear();
-    const monthsElap   = viewYear < currentYear ? 12 : todayDate.getMonth() + 1;
-
-    return (
-      <div className={`rounded-xl border shadow-sm mt-3 overflow-hidden ${theme.card} ${theme.cardBorder}`}>
-        <div className={`px-3 py-2 border-b ${theme.divider}`}>
-          <p className={`text-xs font-bold uppercase tracking-widest ${theme.muted}`}>
-            {period === 'week' ? 'Avg / Day (this week)' : period === 'month' ? 'Avg / Week (this month)' : `Avg / Month (${viewYear})`}
-          </p>
-        </div>
-        <div className="divide-y" style={{ borderColor: 'transparent' }}>
-          {activities.map(a => {
-            let avg = '–';
-            if (period === 'week') {
-              const total = viewWeekDays.reduce((s, d) => s + getCount(a.id, d), 0);
-              if (total > 0) avg = (total / 7).toFixed(1);
-            } else if (period === 'month') {
-              const total = chunks.reduce((s, c) => s + getTotal(a.id, c.days), 0);
-              if (total > 0) avg = (total / chunks.length).toFixed(1);
-            } else {
-              const days    = new Date(viewYear, 0, 1).getDay(); // unused
-              let total = 0;
-              for (let m = 0; m < 12; m++) {
-                const daysInM = new Date(viewYear, m + 1, 0).getDate();
-                for (let d = 1; d <= daysInM; d++) {
-                  total += getCount(a.id, `${viewYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
-                }
-              }
-              if (total > 0) avg = (total / monthsElap).toFixed(1);
-            }
-            return (
-              <div key={a.id} className={`flex items-center justify-between px-3 py-1.5 border-t ${theme.divider}`}>
-                <span className={`text-xs ${theme.textSub}`}>{a.emoji} {a.name}</span>
-                <span className={`text-xs font-bold tabular-nums ${avg !== '–' ? theme.tabActiveText : theme.muted}`}>{avg}</span>
-              </div>
-            );
-          })}
         </div>
       </div>
     );
@@ -853,44 +829,23 @@ function StatsView({ theme }) {
 
   return (
     <div>
-      {/* Period tabs */}
-      <div className={`flex gap-1 p-1 rounded-xl mb-4 ${theme.periodTabBar}`}>
-        {[['week','This Week'],['month','This Month'],['year','This Year']].map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setPeriod(id)}
-            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              period === id ? theme.periodActive : theme.periodInactive
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Table */}
-      <div className={`rounded-xl p-3 shadow-sm border mb-0 ${theme.card} ${theme.cardBorder}`}>
-        {period === 'week'  && <WeekTable  />}
-        {period === 'month' && <MonthTable />}
-        {period === 'year'  && <YearTable  />}
-      </div>
-
-      {/* Averages — always visible below table */}
-      <AvgSummary />
+      {period === 'week'  && <WeekTable  />}
+      {period === 'month' && <MonthTable />}
+      {period === 'year'  && <YearTable  />}
 
       {/* Export + Share */}
-      <div className="flex gap-2 mt-3">
+      <div className="flex gap-2 mt-2">
         {period !== 'year' && (
           <button
             onClick={handleExport}
-            className={`flex-1 py-3 rounded-xl text-sm font-bold active:scale-[0.98] transition-all shadow-sm ${theme.btnSecondary}`}
+            className={`flex-1 py-2 rounded-xl text-xs font-bold active:scale-[0.98] transition-all ${theme.btnSecondary}`}
           >
             ↓ Export CSV
           </button>
         )}
         <button
           onClick={handleShare}
-          className={`flex-1 py-3 rounded-xl text-sm font-bold active:scale-[0.98] transition-all shadow-sm ${theme.btnPrimary}`}
+          className={`flex-1 py-2 rounded-xl text-xs font-bold active:scale-[0.98] transition-all ${theme.btnSecondary}`}
         >
           {shareFeedback || '↗ Share'}
         </button>
@@ -900,14 +855,14 @@ function StatsView({ theme }) {
 }
 
 // ─── Combined screen ──────────────────────────────────────────────────────────
-export default function CalendarStatsScreen({ theme, gamify }) {
+export default function CalendarStatsScreen({ theme, gamify, onShowScoringHelp }) {
   const [view, setView] = useState('calendar');
 
   return (
     <div className="pb-4">
       {/* View toggle */}
       <div className={`flex gap-1 p-1 rounded-xl mb-4 ${theme.periodTabBar}`}>
-        {[['calendar','📅 Calendar'],['stats','📊 Stats'],['logs','📓 Logs']].map(([id, label]) => (
+        {[['calendar','📅 Tracker'],['logs','📓 Logs']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
@@ -920,8 +875,7 @@ export default function CalendarStatsScreen({ theme, gamify }) {
         ))}
       </div>
 
-      {view === 'calendar' && <CalendarView theme={theme} gamify={gamify} />}
-      {view === 'stats'    && <StatsView    theme={theme} />}
+      {view === 'calendar' && <CalendarView theme={theme} gamify={gamify} onShowScoringHelp={onShowScoringHelp} />}
       {view === 'logs'     && <ErrorBoundary><LogsView theme={theme} gamify={gamify} /></ErrorBoundary>}
     </div>
   );
