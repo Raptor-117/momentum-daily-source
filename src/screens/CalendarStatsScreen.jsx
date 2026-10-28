@@ -560,7 +560,7 @@ function TrackerScores({ theme, selDay, year, month }) {
     </ScoreCard>
     <ScoreCard theme={theme} goal={goal}
       title={`${MONTH_NAMES_FULL[month]} ${year}`} sub={partial(mDays)}
-      result={score(mDays, 'month')} prev={score(monthDays(prevM.getFullYear(), prevM.getMonth()), 'month')} prevLabel={MONTH_NAMES_FULL[prevM.getMonth()]}>
+      result={score(mDays, 'month')} prev={score(monthDays(prevM.getFullYear(), prevM.getMonth()), 'month')} prevLabel={MONTH_NAMES[prevM.getMonth()]}>
       <PeriodDetail theme={theme} period="month" weekStart={ws} year={year} month={month} />
     </ScoreCard>
     <ScoreCard theme={theme} goal={goal} title={`${year}`} sub={months.length && months.length < 12 ? 'so far' : ''} result={score(months.flat(), 'month')} chart={
