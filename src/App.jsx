@@ -35,7 +35,8 @@ class AppErrorBoundary extends Component {
 }
 
 export default function App() {
-  const defaultTab = useStore(s => s.defaultTab) || 'habits';
+  const savedTab   = useStore(s => s.defaultTab) || 'habits';
+  const defaultTab = savedTab === 'calendar' ? 'tracker' : savedTab; // 'calendar' = old name of the Tracker tab
   const [tab, setTab]                 = useState(defaultTab);
   const [settingsFocus, setSettingsFocus] = useState(null); // e.g. 'scoring' from the Tracker colour key
   const [showAuth, setShowAuth]       = useState(false);

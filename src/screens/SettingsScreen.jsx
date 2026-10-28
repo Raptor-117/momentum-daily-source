@@ -1106,13 +1106,13 @@ export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, o
           <div className="flex items-center justify-between px-3 py-3">
             <p className={`text-sm font-medium ${theme.text}`}>Default screen</p>
             <select
-              value={defaultTab || 'habits'}
+              value={defaultTab === 'calendar' ? 'tracker' : defaultTab || 'habits'}
               onChange={e => setDefaultTab(e.target.value)}
               className={`text-sm px-3 py-1.5 rounded-lg border outline-none ${theme.select}`}
             >
               <option value="habits">Habits</option>
               <option value="tasks">Tasks</option>
-              <option value="calendar">Calendar</option>
+              <option value="tracker">Tracker</option>
               <option value="wellbeing">Wellbeing</option>
             </select>
           </div>

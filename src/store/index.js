@@ -493,6 +493,7 @@ export const useStore = create(
         darkMode:       s.darkMode,
         gamify:         s.gamify,
         weekStartDay:   s.weekStartDay,
+        defaultTab:     s.defaultTab,
         activities:     s.activities,
         logs:           s.logs,
         tags:           s.tags,
