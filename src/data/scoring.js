@@ -36,22 +36,23 @@ export function configOn(a, date) {
 
 // A habit counts from its first config record or its first log, whichever is
 // earlier (imported history predates many habits' createdAt), until archivedAt.
-function startOf(a, logs) {
+// Archived without a date (before archivedAt existed): until its last log.
+function spanOf(a, logs) {
   const first = configOn(a, '0000-00-00').effectiveFrom;
-  const firstLog = Object.keys(logs[a.id] || {}).filter(d => logs[a.id][d] > 0).sort()[0];
-  return firstLog && firstLog < first ? firstLog : first;
+  const logged = Object.keys(logs[a.id] || {}).filter(d => logs[a.id][d] > 0).sort();
+  const start = logged[0] && logged[0] < first ? logged[0] : first;
+  const end = a.archivedAt || (a.archived ? logged[logged.length - 1] ?? start : null);
+  return { start, end, endInclusive: !a.archivedAt && logged.length > 0 }; // no logs: never live
 }
-function liveOn(a, date, start) {
-  if (a.archived && !a.archivedAt) return false; // archived before archivedAt existed: date unknown
-  return date >= start && (!a.archivedAt || date < a.archivedAt);
-}
+const liveOn = (date, { start, end, endInclusive }) =>
+  date >= start && (!end || date < end || (endInclusive && date === end));
 const scheduledOn = (cfg, date) => !cfg.scheduledDays?.length || cfg.scheduledDays.includes(dow(date));
 
 // One habit over a run of days. kind: 'day' | 'week' | 'month' — weekly habits aren't
 // scored on a day, monthly ones only on a month. Returns null when not scored.
 export function habitCredit(a, days, logs, kind) {
-  const start = startOf(a, logs);
-  const live = days.filter(d => liveOn(a, d, start));
+  const span = spanOf(a, logs);
+  const live = days.filter(d => liveOn(d, span));
   if (!live.length) return null;
   // ponytail: one config per period (the one at its last live day); a mid-period
   // cadence change scores the whole period under the new settings.
@@ -111,14 +112,14 @@ export function scorePeriod(activities, logs, days, kind) {
 // the current week. Monthly/log: null.
 // ponytail: walks back day by day, fine for a few years of history.
 export function streak(a, logs, today, weekStartOf) {
-  const start = startOf(a, logs);
+  const span = spanOf(a, logs), { start } = span;
   const cfg = configOn(a, today);
   const back = (d, n) => { const x = new Date(d + 'T00:00:00'); x.setDate(x.getDate() - n); return toDateStr(x); };
   let n = 0;
   if (cfg.cadence === 'daily') {
     for (let d = today; d >= start && d >= DAILY_LOGGING_FROM; d = back(d, 1)) {
       const c = configOn(a, d);
-      if (!liveOn(a, d, start) || !scheduledOn(c, d)) continue;
+      if (!liveOn(d, span) || !scheduledOn(c, d)) continue;
       if (count(logs, a.id, d) >= (c.target || 1)) n++;
       else if (d !== today) break;
     }

@@ -52,9 +52,13 @@ const late = H('new', 'weekly', 7); late.configHistory[0].effectiveFrom = '2026-
 assert.deepEqual([habitCredit(late, week, { new: L('2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23') }, 'week').expected], [4]);
 assert.equal(credit(late, { new: L(['2026-03-07', 7]) }, march, 'week'), 1);
 assert.equal(habitCredit(late, getWeekDays('2026-10-10'), {}, 'week'), null); // not yet created
-// Archived on the 20th → only Sat–Mon count; archived with no date isn't scored at all.
+// Archived on the 20th → only Sat–Mon count.
 assert.equal(habitCredit(H('old', 'daily', 1, { archivedAt: '2026-10-20' }), week, {}, 'week').expected, 3);
-assert.equal(habitCredit(H('old', 'daily', 1, { archived: true, archivedAt: null }), week, {}, 'week'), null);
+// Archived with no date → counts up to and including its last log; with no logs, never.
+const undated = H('old', 'daily', 1, { archived: true, archivedAt: null });
+assert.equal(habitCredit(undated, week, { old: L('2026-10-17', '2026-10-19') }, 'week').expected, 3);
+assert.equal(habitCredit(undated, getWeekDays('2026-10-24'), { old: L('2026-10-19') }, 'week'), null);
+assert.equal(habitCredit(undated, week, {}, 'week'), null);
 
 // Config history: daily until 1 Oct, then 3/week — September scores as daily, October as weekly.
 const changed = H('read', 'weekly', 3);
