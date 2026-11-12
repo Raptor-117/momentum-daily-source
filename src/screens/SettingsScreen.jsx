@@ -885,38 +885,48 @@ function TrackerSection({ theme, focus, onFocusHandled }) {
   );
 }
 
-// ─── What's new: latest releases, older ones behind a toggle ───────────────────
-function WhatsNewSection({ theme }) {
-  const [showOlder, setShowOlder] = useState(false);
-  const shown = showOlder ? CHANGELOG : CHANGELOG.slice(0, 3);
-  const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
-  return (
-    <div className="mb-6">
-      <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>What's new</p>
-      <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
-        {shown.map((r, i) => (
-          <div key={r.date} className={`px-3 py-3 ${i ? `border-t ${theme.divider}` : ''}`}>
-            <div className="flex items-baseline justify-between gap-2 mb-1">
-              <p className={`text-sm font-medium ${theme.text}`}>{r.title}</p>
-              <p className={`text-xs whitespace-nowrap ${theme.muted}`}>{fmt(r.date)}</p>
-            </div>
-            <ul className="space-y-1">
-              {r.items.map(item => (
-                <li key={item} className={`text-xs leading-relaxed pl-3 relative ${theme.textSub}`}>
-                  <span className={`absolute left-0 ${theme.muted}`}>•</span>{item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-        {CHANGELOG.length > 3 && (
-          <button onClick={() => setShowOlder(o => !o)} className={`w-full px-3 py-2.5 text-xs font-semibold text-left border-t ${theme.divider} ${theme.tabActiveText}`}>
-            {showOlder ? 'Show fewer ▴' : `Show older (${CHANGELOG.length - 3}) ▾`}
-          </button>
-        )}
+// ─── What's new: one row in Settings › App, notes open in a pop-up ─────────────
+const fmtRelease = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+
+function WhatsNewRow({ theme }) {
+  const [open, setOpen] = useState(false);
+  const latest = CHANGELOG[0];
+  return (<>
+    <button onClick={() => setOpen(true)} className="flex items-center justify-between w-full px-3 py-3 text-left">
+      <div>
+        <p className={`text-sm font-medium ${theme.text}`}>What's new</p>
+        <p className={`text-xs ${theme.muted}`}>Latest: {latest.title} · {fmtRelease(latest.date)}</p>
       </div>
-    </div>
-  );
+      <span className={`text-base ${theme.muted}`}>›</span>
+    </button>
+    {open && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => setOpen(false)}>
+        <div className={`w-full max-w-sm max-h-[80vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden border ${theme.card} ${theme.cardBorder}`} onClick={e => e.stopPropagation()}>
+          <div className={`flex items-center justify-between px-4 py-3 border-b ${theme.divider}`}>
+            <h2 className={`text-sm font-bold ${theme.text}`}>What's new</h2>
+            <button onClick={() => setOpen(false)} aria-label="Close" className={`w-8 h-8 -mr-2 flex items-center justify-center rounded-lg text-base ${theme.muted}`}>✕</button>
+          </div>
+          <div className="overflow-y-auto">
+            {CHANGELOG.map((r, i) => (
+              <div key={r.date} className={`px-4 py-3 ${i ? `border-t ${theme.divider}` : ''}`}>
+                <div className="flex items-baseline justify-between gap-2 mb-1">
+                  <p className={`text-sm font-medium ${theme.text}`}>{r.title}</p>
+                  <p className={`text-xs whitespace-nowrap ${theme.muted}`}>{fmtRelease(r.date)}</p>
+                </div>
+                <ul className="space-y-1">
+                  {r.items.map(item => (
+                    <li key={item} className={`text-xs leading-relaxed pl-3 relative ${theme.textSub}`}>
+                      <span className={`absolute left-0 ${theme.muted}`}>•</span>{item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )}
+  </>);
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -1189,11 +1199,10 @@ export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, o
               {updateStatus === 'checking' ? `Checking${dots}` : updateStatus === 'updated' ? '✓ Updated!' : updateStatus === 'uptodate' ? '✓ Up to date' : 'Update'}
             </button>
           </div>
+          <div className={`border-t ${theme.divider}`} />
+          <WhatsNewRow theme={theme} />
         </div>
       </div>
-
-      {/* ── What's new ── */}
-      <WhatsNewSection theme={theme} />
 
       {/* ── Version ── */}
       <div className="mt-6 text-center">
