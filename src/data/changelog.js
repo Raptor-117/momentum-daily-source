@@ -5,6 +5,13 @@
 // would notice — no technical detail. Add an entry with every merge to prod.
 export const CHANGELOG = [
   {
+    date: '2026-11-12',
+    title: "What's new",
+    items: [
+      "Settings › What's new shows what changed in each update.",
+    ],
+  },
+  {
     date: '2026-10-28',
     title: 'New Tracker',
     items: [
