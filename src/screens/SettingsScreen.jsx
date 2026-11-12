@@ -11,6 +11,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
 import { todayStr } from '../data';
 import { BANDS } from '../data/scoring';
+import { CHANGELOG } from '../data/changelog';
 
 // ─── Tag colour presets ───────────────────────────────────────────────────────
 const PRESET_COLORS = [
@@ -884,6 +885,40 @@ function TrackerSection({ theme, focus, onFocusHandled }) {
   );
 }
 
+// ─── What's new: latest releases, older ones behind a toggle ───────────────────
+function WhatsNewSection({ theme }) {
+  const [showOlder, setShowOlder] = useState(false);
+  const shown = showOlder ? CHANGELOG : CHANGELOG.slice(0, 3);
+  const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+  return (
+    <div className="mb-6">
+      <p className={`text-xs font-bold uppercase tracking-widest pl-1 mb-2 ${theme.sectionLabel}`}>What's new</p>
+      <div className={`rounded-xl border shadow-sm overflow-hidden ${theme.card} ${theme.cardBorder}`}>
+        {shown.map((r, i) => (
+          <div key={r.date} className={`px-3 py-3 ${i ? `border-t ${theme.divider}` : ''}`}>
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <p className={`text-sm font-medium ${theme.text}`}>{r.title}</p>
+              <p className={`text-xs whitespace-nowrap ${theme.muted}`}>{fmt(r.date)}</p>
+            </div>
+            <ul className="space-y-1">
+              {r.items.map(item => (
+                <li key={item} className={`text-xs leading-relaxed pl-3 relative ${theme.textSub}`}>
+                  <span className={`absolute left-0 ${theme.muted}`}>•</span>{item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {CHANGELOG.length > 3 && (
+          <button onClick={() => setShowOlder(o => !o)} className={`w-full px-3 py-2.5 text-xs font-semibold text-left border-t ${theme.divider} ${theme.tabActiveText}`}>
+            {showOlder ? 'Show fewer ▴' : `Show older (${CHANGELOG.length - 3}) ▾`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, onSignOut, onPushToCloud, onPullFromCloud, onDeleteAccount, focus, onFocusHandled }) {
   const { darkMode, toggleDarkMode, gamify, toggleGameify, weekStartDay, setWeekStartDay, defaultTab, setDefaultTab } = useStore();
@@ -1156,6 +1191,9 @@ export default function SettingsScreen({ theme, authUser, syncing, onShowAuth, o
           </div>
         </div>
       </div>
+
+      {/* ── What's new ── */}
+      <WhatsNewSection theme={theme} />
 
       {/* ── Version ── */}
       <div className="mt-6 text-center">
