@@ -494,7 +494,7 @@ function ScoreCard({ theme, title, sub, result, prev, prevLabel, goal, chart, ch
   return (
     <div className={`rounded-xl p-3 mb-3 border shadow-sm ${theme.card} ${theme.cardBorder}`}>
       <div className="flex items-center justify-between gap-2">
-        <p className={`text-sm font-bold ${theme.text}`}>{title} {sub && <span className={`text-xs font-normal ${theme.muted}`}>{sub}</span>}</p>
+        <p className={`text-sm font-bold ${theme.text}`}>{title} {sub && <span className={`text-xs font-normal whitespace-nowrap ${theme.muted}`}>{sub}</span>}</p>
         {pct != null && <span className={`text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${theme.bandPill[band]}`}>{pct}% · {band}</span>}
       </div>
       {pct == null ? (
@@ -515,10 +515,19 @@ function ScoreCard({ theme, title, sub, result, prev, prevLabel, goal, chart, ch
         <div className="mt-2 space-y-1">
           {tags.filter(t => result.categories[t.id]).map(t => {
             const c = result.categories[t.id];
+            const before = prev?.categories?.[t.id]?.pct;
+            const d = before != null ? c.pct - before : null;
             return (
               <div key={t.id} className="flex items-center justify-between text-xs">
                 <span className={theme.textSub}><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: t.color }} />{t.label}</span>
-                <span className={`tabular-nums ${theme.muted}`}>{+c.points.toFixed(1)} / {c.count} · {c.pct}%</span>
+                <span className={`tabular-nums ${theme.muted}`}>
+                  {+c.points.toFixed(1)} / {c.count} · {c.pct}%
+                  {d != null && (
+                    <span className={`inline-block w-9 text-right font-semibold ${d > 0 ? 'text-green-500' : d < 0 ? 'text-rose-500' : ''}`}>
+                      {d > 0 ? '▲' : d < 0 ? '▼' : '='}{d ? Math.abs(d) : ''}
+                    </span>
+                  )}
+                </span>
               </div>
             );
           })}
