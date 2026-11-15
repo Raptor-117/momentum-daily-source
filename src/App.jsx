@@ -8,7 +8,7 @@ import WellbeingScreen     from './screens/WellbeingScreen';
 import SettingsScreen      from './screens/SettingsScreen';
 import AuthScreen          from './screens/AuthScreen';
 import { supabase, signOut, getUser, onAuthStateChange, updatePassword } from './lib/supabase';
-import { pullAllData, pushAllData, mergeFromCloud, deleteAllUserData } from './lib/sync';
+import { pullAllData, pushAllData, mergePull, pullFullState, hasSyncState, resetSyncState, mergeFromCloud, deleteAllUserData } from './lib/sync';
 import { captureError } from './lib/errors';
 
 class AppErrorBoundary extends Component {
@@ -86,11 +86,10 @@ export default function App() {
 
   // ── Auth: check existing session on boot ───────────────────────────────────
   useEffect(() => {
-    getUser().then(user => {
-      setAuthUser(user);
-      authUserRef.current = user;
-      // Restore session without sync — local is already the truth
-    });
+    // UI only. authUserRef is set by INITIAL_SESSION below — setting it here too could
+    // win the race and make that handler think the user was already known, skipping
+    // the startup sync.
+    getUser().then(user => { if (user) setAuthUser(user); }); // offline null mustn't sign the UI out
 
     const { data: { subscription } } = onAuthStateChange(async (event, user) => {
       if (event === 'PASSWORD_RECOVERY') {
@@ -102,37 +101,12 @@ export default function App() {
       setAuthUser(user);
 
       if (user && !prev) {
-        // Session restore on app load: refresh once from the cloud so a returning
-        // device isn't stale. This is a CLEAN replace (applyPull) — NOT the old union
-        // that resurrected deleted tasks / reverted completions — and it's guarded so
-        // it can't clobber unsaved local edits (fresh load normally has none).
+        // Session restore on app load: upload this device's pending changes, then
+        // pull only what changed elsewhere (sync v2, lib/sync.js).
         if (event === 'INITIAL_SESSION') {
           localStorage.setItem('momentumLastUserId', user.id);
-          let unpushed = false;
-          try { unpushed = localStorage.getItem('momentum-unpushed') === '1'; } catch { /* ignore */ }
-          if (unpushed) {
-            // Local has edits from a previous session that never reached the cloud
-            // (app closed before the debounced push). PUSH them up — do NOT pull over them.
-            try {
-              await pushAllData(user.id, useStore.getState());
-              try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ }
-            } catch (err) {
-              captureError(err, { context: 'initialLoadPush' });
-            }
-            return;
-          }
-          // Local is clean → safe to refresh from the cloud so a returning device isn't stale.
-          try {
-            if (!syncTimerRef.current && !pushInFlightRef.current) {
-              const remote = await pullAllData(user.id);
-              if (!syncTimerRef.current && !pushInFlightRef.current &&
-                  (remote.activities?.length > 0 || remote.tasks?.length > 0)) {
-                applyPull(remote);
-              }
-            }
-          } catch (err) {
-            captureError(err, { context: 'initialLoadPull' });
-          }
+          try { await syncNow(user.id); }
+          catch (err) { captureError(err, { context: 'initialSync' }); }
           return;
         }
       }
@@ -148,8 +122,9 @@ export default function App() {
             hydrateFromSupabase({ activities: [], tasks: [], tags: [], logs: {}, checkIns: {}, journalEntries: [] });
           }
           localStorage.setItem('momentumLastUserId', user.id);
+          resetSyncState(); // the next sync starts this device's v2 snapshot from scratch
 
-          const remoteData = await pullAllData(user.id);
+          const remoteData = await pullFullState(user.id);
           const localActivities = isNewUser ? [] : (useStore.getState().activities || []);
           const cloudHasData = remoteData.activities?.length > 0;
           const localHasData = localActivities.filter(a => a.name || a.label).length > 0;
@@ -245,6 +220,8 @@ export default function App() {
     if (!userId || syncing) return;
     setSyncing(true);
     try {
+      // Manual Push = upload everything, not just changes (a rescue if the cloud is behind).
+      resetSyncState();
       await pushAllData(userId, useStore.getState());
       try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ }
       setSyncMsg('✓ Pushed to cloud');
@@ -257,22 +234,30 @@ export default function App() {
     }
   }
 
-  // Apply a cloud pull, but never wipe habits/tags/journal-prompts with an EMPTY
-  // cloud set. These share hard-coded default IDs across users; if a user's defaults
-  // collided with another account's IDs they never saved to the cloud, so a plain
-  // replace would erase them locally. Preserve local when the cloud has none.
-  // (The real cure is per-user IDs — see the multi-user PK migration.)
-  function applyPull(remote) {
-    const local = useStore.getState();
-    applyingRemoteRef.current = true; // mark: this state change is a cloud pull, not a user edit
-    hydrateFromSupabase({
-      ...remote,
-      activities:     remote.activities?.length     ? remote.activities     : local.activities,
-      tags:           remote.tags?.length           ? remote.tags           : local.tags,
-      journalPrompts: remote.journalPrompts?.length ? remote.journalPrompts : local.journalPrompts,
-    });
+  // Merge pulled rows into the CURRENT store (sync v2: only changed rows arrive, and
+  // rows with unpushed local edits are skipped — the local edit is pushed and wins).
+  function applyRemote(remote, opts) {
+    const patch = mergePull(remote, useStore.getState(), opts);
+    if (!Object.keys(patch).length) return;
+    applyingRemoteRef.current = true; // a cloud change, not a user edit
+    hydrateFromSupabase(patch);
     applyingRemoteRef.current = false;
-    try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ } // local now matches cloud
+  }
+
+  // Push this device's changes, then pull everyone else's. A device's first v2 sync
+  // pulls everything: if it had no unsaved edits the cloud copy wins (it may be
+  // stale); if it did, they're uploaded first, as before.
+  async function syncNow(userId) {
+    if (!hasSyncState(userId)) {
+      let unpushed = false;
+      try { unpushed = localStorage.getItem('momentum-unpushed') === '1'; } catch { /* ignore */ }
+      if (unpushed) await pushAllData(userId, useStore.getState());
+      applyRemote(await pullAllData(userId), { remoteWins: !unpushed });
+    } else {
+      await pushAllData(userId, useStore.getState());
+      applyRemote(await pullAllData(userId));
+    }
+    try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ }
   }
 
   // ── Pull: cloud → local (overwrites local — use on new device setup) ──────
@@ -287,10 +272,13 @@ export default function App() {
         setTimeout(() => setSyncMsg(''), 4000);
         return;
       }
+      // Manual Pull = take the cloud copy of everything (unsaved local-only items stay
+      // and are uploaded on the next save).
+      resetSyncState();
       const remoteData = await pullAllData(authUser.id);
-      const hasData = remoteData.activities?.length > 0 || remoteData.tasks?.length > 0 || remoteData.tags?.length > 0;
+      const hasData = remoteData.rows.activities.length > 0 || remoteData.rows.tasks.length > 0;
       if (hasData) {
-        applyPull(remoteData);
+        applyRemote(remoteData, { remoteWins: true });
         setSyncMsg('✓ Pulled from cloud');
       } else {
         setSyncMsg('No cloud data found');
@@ -304,32 +292,21 @@ export default function App() {
     }
   }
 
-  // ── Auto-update on focus: when this device regains focus, pull the cloud so
-  // edits made on another device show up automatically — but ONLY when this device
-  // has no unsaved (pending) or in-flight local changes. That guard means it can
-  // never revert or wipe your own work. It's a clean replace (like the Pull button),
-  // NOT the old "remote wins" merge that reverted completions / resurrected deletes.
+  // ── Auto-update on focus: push this device's changes, then pull only rows that
+  // changed elsewhere. Safe with unsaved edits — those rows are skipped by the merge.
   useEffect(() => {
     let busy = false;
     async function autoPullIfIdle() {
       if (document.visibilityState !== 'visible' || busy) return;
       const user = authUserRef.current;
-      if (!user || syncTimerRef.current || pushInFlightRef.current) return; // unsaved local edits — skip
-      try { if (localStorage.getItem('momentum-unpushed') === '1') return; } catch { /* ignore */ } // dirty from a prior session — don't clobber
+      if (!user) return;
       busy = true;
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
-        const remote = await pullAllData(user.id);
-        // Re-check after the (async) fetch: if the user started editing meanwhile, don't clobber it.
-        if (syncTimerRef.current || pushInFlightRef.current) return;
-        try { if (localStorage.getItem('momentum-unpushed') === '1') return; } catch { /* ignore */ }
-        // Never wipe local with an empty pull; only replace when cloud actually has data.
-        if (remote.activities?.length > 0 || remote.tasks?.length > 0) {
-          applyPull(remote);
-        }
+        await syncNow(user.id);
       } catch (err) {
-        captureError(err, { context: 'autoPull' });
+        captureError(err, { context: 'autoSync' });
       } finally {
         busy = false;
       }

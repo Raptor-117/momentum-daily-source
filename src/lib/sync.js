@@ -1,128 +1,167 @@
 import { supabase } from './supabase';
 import { captureError } from './errors';
-import { todayStr, normalizeActivity, weeklyGoal } from '../data';
+import { live, TABLES, keyOf, conflictOf, diffLocal, mergeRows } from './syncCore';
 
-// ── Push: write local Zustand state to Supabase ───────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNC v2 — only what changed (docs/sync-v2-migration.sql)
+// ─────────────────────────────────────────────────────────────────────────────
+// Every synced item is one cloud row. The device keeps a fingerprint of each row
+// as it was last synced (the "snapshot"), plus a cursor: the server time of the
+// newest row it has seen.
+//
+//   Push  = rows whose fingerprint differs from the snapshot (new/edited), and a
+//           delete marker (deleted_at) for rows that are in the snapshot but gone
+//           locally. Nothing else is uploaded.
+//   Pull  = rows with updated_at after the cursor (server-set by a trigger, so phone
+//           clocks don't matter). A row whose local copy has unpushed edits is
+//           skipped — the local edit is pushed next and becomes the latest save.
+//
+// Every write ends in .throwOnError(): the Supabase client otherwise reports a
+// failed request (incl. a dropped connection) as a quiet { error }, and a failed
+// push used to look successful.
 
-// Every write below ends in .throwOnError(). By default the Supabase client turns
-// a failed request (incl. a dropped connection) into a quiet { error } instead of
-// throwing, so a failed push used to look successful: the unsaved-changes flag was
-// cleared and the next pull overwrote newer local data with the older cloud copy.
-export async function pushAllData(userId, rawState) {
-  // Bail if session is expired or belongs to a different user.
-  // Try a refresh first — a transient/expired token shouldn't silently drop a push.
+const SYNC_KEY = 'momentum-sync-v2';
+const OVERLAP_MS = 60_000; // re-read the last minute: a row can commit with a slightly older updated_at
+const PAGE = 1000;         // Supabase caps a query at 1000 rows
+
+// ── Snapshot + cursor (localStorage) ─────────────────────────────────────────
+// ponytail: kept in localStorage next to the app state (~30 bytes per log row); move
+// to IndexedDB if storage quota ever becomes a problem.
+let sync = null;
+function loadSync(userId) {
+  if (!sync || sync.userId !== userId) {
+    try { sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); } catch { sync = null; }
+    if (!sync || sync.userId !== userId) sync = { userId, cursor: null, rows: {} };
+  }
+  return sync;
+}
+function saveSync() {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); }
+  catch (err) { captureError(err, { context: 'saveSyncState' }); }
+}
+
+// True once this device has done its first v2 pull for this user.
+export function hasSyncState(userId) { return !!loadSync(userId).cursor; }
+// Forget sync state (sign-in as someone else, or "pull everything again").
+export function resetSyncState() { sync = null; try { localStorage.removeItem(SYNC_KEY); } catch { /* ignore */ } }
+
+// ── Push ─────────────────────────────────────────────────────────────────────
+async function requireSession(userId) {
+  // Try a refresh first — an expired token shouldn't silently drop a push.
   let { data: { session } } = await supabase.auth.getSession();
   if (!session) {
     try { ({ data: { session } } = await supabase.auth.refreshSession()); } catch { /* ignore */ }
   }
   if (!session || session.user.id !== userId) {
-    // Was silent before — this is exactly how a push could vanish with no trace.
     captureError(new Error('pushAllData bailed: no valid session for this user'), {
-      context: 'pushAllData.bail',
-      hasSession: !!session,
-      sessionUser: session?.user?.id ?? null,
-      wantUser: userId,
+      context: 'pushAllData.bail', hasSession: !!session, sessionUser: session?.user?.id ?? null, wantUser: userId,
     });
-    // Throw, don't return: callers treat a normal return as success and clear the
-    // unsaved-changes flag, which turned a skipped push into silent data loss.
+    // Throw, don't return: callers treat a normal return as success.
     throw new Error('Push skipped: not signed in as this user');
   }
-
-  const state = rawState;
-  await Promise.all([
-    pushPreferences(userId, state),
-    pushActivities(userId, state.activities),
-    pushLogs(userId, state.logs, state.activities),
-    pushTags(userId, state.tags),
-    pushTasks(userId, state.tasks),
-    pushCheckIns(userId, state.checkIns),
-    pushJournalPrompts(userId, state.journalPrompts),
-    pushJournalEntries(userId, state.journalEntries),
-    pushWellbeingNotes(userId, state.wellbeingNotes),
-    pushLibrary(userId, state.library),
-    pushNotifications(userId, state.notifications),
-    pushDailyDrafts(userId, state.dailyDrafts),
-    pushDailyMessageDefaults(userId, state.dailyMessageDefaults),
-    pushCustomEmotions(userId, state.customEmotions),
-    pushRewardMilestones(userId, state.rewardMilestone),
-    pushMilestoneSeen(userId, state.milestoneSeen),
-  ]);
 }
 
-// ── Pull: load all Supabase data into a state object ─────────────────────────
+async function markDeleted(def, userId, keys) {
+  const at = new Date().toISOString();
+  if (!def.keyCols.length) return;
+  // Group by the first key column; .in() on the last (logs: per habit, the dates).
+  const groups = new Map();
+  for (const key of keys) {
+    const parts = key.split('|');
+    const head = parts.slice(0, -1).join('|');
+    if (!groups.has(head)) groups.set(head, { parts, last: [] });
+    groups.get(head).last.push(parts[parts.length - 1]);
+  }
+  const lastCol = def.keyCols[def.keyCols.length - 1];
+  for (const { parts, last } of groups.values()) {
+    for (let i = 0; i < last.length; i += 200) {
+      let q = supabase.from(def.table).update({ deleted_at: at }).eq('user_id', userId);
+      def.keyCols.slice(0, -1).forEach((c, j) => { q = q.eq(c, parts[j]); });
+      await q.in(lastCol, last.slice(i, i + 200)).throwOnError();
+    }
+  }
+}
 
+// Pushes only what changed since the last sync. Name kept from v1 (callers in App).
+export async function pushAllData(userId, state) {
+  await requireSession(userId);
+  const snap = loadSync(userId);
+  const changes = diffLocal(state, snap);
+  // Habits first: a new habit's logs need its row to exist (foreign key).
+  changes.sort((a, b) => (b.def.table === 'activities') - (a.def.table === 'activities'));
+  for (const { def, upserts, deletes } of changes) {
+    for (let i = 0; i < upserts.length; i += 500) {
+      const payload = upserts.slice(i, i + 500).map(u => ({ user_id: userId, ...u.row, ...live }));
+      await supabase.from(def.table).upsert(payload, { onConflict: conflictOf(def) }).throwOnError();
+    }
+    if (deletes.length) await markDeleted(def, userId, deletes);
+    // Record what reached the cloud. Edits made during the push keep a different
+    // fingerprint, so they stay pending for the next push.
+    const t = (snap.rows[def.table] ||= {});
+    for (const u of upserts) t[u.key] = u.fp;
+    for (const k of deletes) delete t[k];
+    saveSync();
+  }
+}
+
+// ── Pull ─────────────────────────────────────────────────────────────────────
+async function fetchRows(def, userId, since) {
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase.from(def.table).select('*').eq('user_id', userId);
+    if (since) q = q.gt('updated_at', since);
+    else q = q.is('deleted_at', null);
+    q = q.order('updated_at');
+    if (!def.single) q = q.order('id'); // tiebreak — many rows share one updated_at
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
+}
+
+// Rows changed since this device's cursor (everything on the first pull).
+// Name kept from v1. Returns { rows: { table: row[] }, full }.
 export async function pullAllData(userId) {
-  const [
-    preferences, activities, logs, tags, tasks,
-    checkIns, journalPrompts, journalEntries, wellbeingNotes,
-    library, notifications, dailyDrafts, dailyMessageDefaults,
-    customEmotions, rewardMilestones, milestoneSeen,
-  ] = await Promise.all([
-    pullPreferences(userId),
-    pullActivities(userId),
-    pullLogs(userId),
-    pullTags(userId),
-    pullTasks(userId),
-    pullCheckIns(userId),
-    pullJournalPrompts(userId),
-    pullJournalEntries(userId),
-    pullWellbeingNotes(userId),
-    pullLibrary(userId),
-    pullNotifications(userId),
-    pullDailyDrafts(userId),
-    pullDailyMessageDefaults(userId),
-    pullCustomEmotions(userId),
-    pullRewardMilestones(userId),
-    pullMilestoneSeen(userId),
-  ]);
-
-  return {
-    ...preferences,
-    activities,
-    logs,
-    tags,
-    tasks,
-    checkIns,
-    journalPrompts,
-    journalEntries,
-    wellbeingNotes,
-    library,
-    notifications,
-    dailyDrafts,
-    dailyMessageDefaults,
-    customEmotions,
-    rewardMilestone: rewardMilestones,
-    milestoneSeen,
-  };
+  const { cursor } = loadSync(userId);
+  const since = cursor ? new Date(new Date(cursor).getTime() - OVERLAP_MS).toISOString() : null;
+  const lists = await Promise.all(TABLES.map(def => fetchRows(def, userId, since)));
+  return { userId, full: !since, rows: Object.fromEntries(TABLES.map((def, i) => [def.table, lists[i]])) };
 }
 
-// ── Merge: pull remote data and intelligently combine with local ──────────────
-// Called on app focus so both devices stay in sync without wiping each other.
-//
-// Rules:
-//   Logs        → Math.max(local, remote) per activity/date  (never lose a logged habit)
-//   Activities, Tasks, Tags, Library, Notifications, Custom emotions
-//               → union by ID; remote wins on conflict  (pick up additions from other device)
-//   CheckIns, WellbeingNotes, DailyDrafts
-//               → union by date key; remote wins on conflict
-//   JournalEntries
-//               → union by date + prompt; remote wins on conflict
-//   Preferences → remote wins (last device to push wins)
+// Merge pulled rows into the CURRENT local state (call synchronously right before
+// applying). Returns the state slices to set; saves the snapshot and cursor.
+// remoteWins: first sync of a device with no pending edits — the cloud copy wins
+// even where the (empty) snapshot makes every local row look "edited".
+export function mergePull(remote, state, opts) {
+  const patch = mergeRows(remote, state, loadSync(remote.userId), opts);
+  saveSync();
+  return patch;
+}
 
+// Full cloud copy shaped like the store — for the explicit sign-in flow (conflict
+// check / first backup), which compares whole datasets.
+export async function pullFullState(userId) {
+  const lists = await Promise.all(TABLES.map(def => fetchRows(def, userId, null)));
+  const empty = { activities: [], tags: [], tasks: [], journalPrompts: [], library: [], notifications: [], customEmotions: [],
+    logs: {}, journalEntries: {}, checkIns: {}, wellbeingNotes: {}, dailyDrafts: {} };
+  const remote = { userId, full: true, rows: Object.fromEntries(TABLES.map((d, i) => [d.table, lists[i]])) };
+  // Merged against a throwaway snapshot — this device's real one is untouched.
+  return { ...empty, ...mergeRows(remote, empty, { userId, cursor: null, rows: {} }, { remoteWins: true }) };
+}
+
+// ── Merge helpers for the explicit sign-in flow ──────────────────────────────
 export async function mergeFromCloud(userId, localState) {
-  const remote = await pullAllData(userId);
-
+  const remote = await pullFullState(userId);
   return {
-    // Preferences — remote wins
     darkMode:             remote.darkMode             ?? localState.darkMode,
     gamify:               remote.gamify               ?? localState.gamify,
-    weekStartDay:         remote.weekStartDay          ?? localState.weekStartDay,
+    weekStartDay:         remote.weekStartDay         ?? localState.weekStartDay,
     uiPrefs:              remote.uiPrefs              || localState.uiPrefs,
     dailyMessageDefaults: remote.dailyMessageDefaults || localState.dailyMessageDefaults,
     rewardMilestone:      remote.rewardMilestone      || localState.rewardMilestone,
     milestoneSeen:        remote.milestoneSeen        || localState.milestoneSeen,
-
-    // Arrays keyed by .id — union, remote wins on conflict
     activities:    mergeById(localState.activities,    remote.activities),
     tags:          mergeById(localState.tags,          remote.tags),
     tasks:         mergeById(localState.tasks,         remote.tasks),
@@ -130,21 +169,13 @@ export async function mergeFromCloud(userId, localState) {
     notifications: mergeById(localState.notifications, remote.notifications),
     customEmotions:mergeById(localState.customEmotions,remote.customEmotions),
     journalPrompts:mergeById(localState.journalPrompts,remote.journalPrompts),
-
-    // Logs — take the higher count per activity/date (never lose a check)
     logs: mergeLogs(localState.logs, remote.logs),
-
-    // Date-keyed objects — union, remote wins on conflict
     checkIns:       { ...localState.checkIns,       ...remote.checkIns },
     wellbeingNotes: { ...localState.wellbeingNotes, ...remote.wellbeingNotes },
     dailyDrafts:    { ...localState.dailyDrafts,    ...remote.dailyDrafts },
-
-    // Journal entries keyed by date + promptId — union, remote wins per prompt
     journalEntries: mergeJournalEntries(localState.journalEntries, remote.journalEntries),
   };
 }
-
-// Helpers ─────────────────────────────────────────────────────────────────────
 
 function mergeById(local = [], remote = []) {
   const map = new Map((local).map(item => [item.id, item]));
@@ -175,527 +206,11 @@ function mergeJournalEntries(local = {}, remote = {}) {
   return merged;
 }
 
-// ── Preferences ───────────────────────────────────────────────────────────────
-
-async function pushPreferences(userId, state) {
-  await supabase.from('user_preferences').upsert({
-    user_id: userId,
-    dark_mode: state.darkMode,
-    gamify: state.gamify,
-    week_start_day: state.weekStartDay,
-    ui_prefs: state.uiPrefs,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'user_id' }).throwOnError();
-}
-
-async function pullPreferences(userId) {
-  const { data, error } = await supabase
-    .from('user_preferences')
-    .select('*')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return {};
-  return {
-    darkMode: data.dark_mode,
-    gamify: data.gamify,
-    weekStartDay: data.week_start_day,
-    uiPrefs: data.ui_prefs,
-  };
-}
-
-// ── Activities ────────────────────────────────────────────────────────────────
-
-async function pushActivities(userId, activities) {
-  // Store uses 'name', Supabase column is 'label'
-  const valid = (activities || []).filter(a => (a.name || a.label) && a.id && typeof a.id === 'string');
-
-  if (valid.length > 0) {
-    const payload = valid.map((a, i) => ({
-      id: a.id,
-      user_id: userId,
-      label: a.name || a.label,
-      emoji: a.emoji,
-      color: a.color || '#6366f1',
-      cadence: a.cadence,
-      target: a.target,
-      // Legacy column, kept as the WEEKLY equivalent so app versions from before
-      // cadence (a tab left open on another device) still read sensible numbers.
-      weekly_target: weeklyGoal(a) ?? a.target ?? 0,
-      has_target: a.hasTarget ?? false,
-      archived_at: a.archivedAt ?? null,
-      config_history: a.configHistory ?? null,
-      accountability: a.accountability ?? false,
-      tags: Array.isArray(a.tags) ? a.tags : [],
-      pillars: Array.isArray(a.pillars) ? a.pillars : [],
-      notes: typeof a.notes === 'string' ? a.notes : '',
-      scheduled_days: Array.isArray(a.scheduledDays) ? a.scheduledDays : [],
-      complexity: a.complexity || 'medium',
-      archived: a.archived || false,
-      sort_order: i,
-      created_at: a.createdAt || '2020-01-01',
-      updated_at: new Date().toISOString(),
-    }));
-    await supabase.from('activities').upsert(payload, { onConflict: 'user_id,id' }).throwOnError();
-
-    // Delete cloud records that were removed locally
-    const localIds = valid.map(a => a.id);
-    await supabase
-      .from('activities')
-      .delete()
-      .eq('user_id', userId)
-      .not('id', 'in', `(${localIds.join(',')})`).throwOnError();
-  } else {
-    // All activities deleted locally — clear cloud too
-    await supabase.from('activities').delete().eq('user_id', userId).throwOnError();
-  }
-}
-
-async function pullActivities(userId) {
-  const { data, error } = await supabase
-    .from('activities')
-    .select('*')
-    .eq('user_id', userId)
-    .order('sort_order');
-  if (error) throw error;
-  // Store uses 'name', Supabase column is 'label' — map back correctly
-  return (data || []).map(a => normalizeActivity({
-    id: a.id,
-    name: a.label,
-    emoji: a.emoji,
-    color: a.color,
-    cadence: a.cadence,          // null until a cadence-aware client pushes — normalize derives it
-    target: a.target,
-    weeklyTarget: a.weekly_target,
-    hasTarget: a.has_target,
-    archivedAt: a.archived_at,
-    configHistory: a.config_history,
-    accountability: a.accountability ?? false,
-    tags: a.tags || [],
-    pillars: a.pillars || [],
-    notes: a.notes || '',
-    scheduledDays: a.scheduled_days || [],
-    complexity: a.complexity,
-    archived: a.archived,
-    createdAt: a.created_at,
-  }));
-}
-
-// ── Logs ──────────────────────────────────────────────────────────────────────
-// logs shape: { activityId: { dateStr: count } }
-
-async function pushLogs(userId, logs, activities = []) {
-  if (!logs) return;
-  // Logs of a habit that no longer exists can never be saved (logs -> activities
-  // foreign key) and would fail the whole batch on every push, so skip them.
-  const known = new Set(activities.map(a => a.id));
-  const rows = [];
-  Object.entries(logs).forEach(([activityId, dateCounts]) => {
-    if (!known.has(activityId)) return;
-    Object.entries(dateCounts).forEach(([logDate, count]) => {
-      // Zeros too: tapping − back to 0 must overwrite the cloud's old count, or the
-      // next pull brings the un-logged point back.
-      if (count >= 0) rows.push({ user_id: userId, activity_id: activityId, log_date: logDate, count });
-    });
-  });
-  if (!rows.length) return;
-  await supabase.from('logs').upsert(rows, { onConflict: 'user_id,activity_id,log_date' }).throwOnError();
-}
-
-async function pullLogs(userId) {
-  const logs = {};
-  // Supabase caps a single query at 1000 rows — paginate so multi-year history
-  // (thousands of daily logs) loads fully instead of being silently truncated.
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('logs')
-      .select('activity_id, log_date, count')
-      .eq('user_id', userId)
-      .order('id')
-      .range(from, from + PAGE - 1);
-    if (error) throw error;
-    (data || []).forEach(({ activity_id, log_date, count }) => {
-      if (!logs[activity_id]) logs[activity_id] = {};
-      logs[activity_id][log_date] = count;
-    });
-    if (!data || data.length < PAGE) break;
-  }
-  return logs;
-}
-
-// ── Tags ──────────────────────────────────────────────────────────────────────
-
-async function pushTags(userId, tags) {
-  const valid = (tags || []).filter(t => t.id && typeof t.id === 'string' && t.label);
-
-  if (valid.length > 0) {
-    await supabase.from('tags').upsert(
-      valid.map((t, i) => ({
-        id: t.id,
-        user_id: userId,
-        label: t.label,
-        color: t.color,
-        sort_order: i,
-      })),
-      { onConflict: 'user_id,id' }
-    ).throwOnError();
-
-    // Delete cloud records that were removed locally
-    const localIds = valid.map(t => t.id);
-    await supabase
-      .from('tags')
-      .delete()
-      .eq('user_id', userId)
-      .not('id', 'in', `(${localIds.join(',')})`).throwOnError();
-  } else {
-    // All tags deleted locally — clear cloud too
-    await supabase.from('tags').delete().eq('user_id', userId).throwOnError();
-  }
-}
-
-async function pullTags(userId) {
-  const { data, error } = await supabase
-    .from('tags')
-    .select('*')
-    .eq('user_id', userId)
-    .order('sort_order');
-  if (error) throw error;
-  return (data || []).map(t => ({ id: t.id, label: t.label, color: t.color }));
-}
-
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-
-async function pushTasks(userId, tasks) {
-  const today = todayStr();
-  const valid = (tasks || []).filter(t => {
-    if (!t.title || !t.id || typeof t.id !== 'string') return false;
-    try { JSON.stringify(t); return true; }
-    catch { return false; }
-  });
-
-  if (valid.length > 0) {
-    await supabase.from('tasks').upsert(
-      valid.map(t => ({
-        id: t.id,
-        user_id: userId,
-        title: t.title,
-        notes: t.notes,
-        due_date: t.dueDate || null,
-        complexity: t.complexity || 'medium',
-        tags: t.tags || [],
-        pillars: t.pillars || [],
-        completed: t.completed || false,
-        completed_date: t.completedDate || null,
-        recurrence: t.recurrence || 'none',
-        last_completed: t.lastCompleted || null,
-        created_at: t.createdAt || today,
-        updated_at: new Date().toISOString(),
-      })),
-      { onConflict: 'user_id,id' }
-    ).throwOnError();
-
-    // Delete cloud records that were removed locally
-    const localIds = valid.map(t => t.id);
-    await supabase
-      .from('tasks')
-      .delete()
-      .eq('user_id', userId)
-      .not('id', 'in', `(${localIds.join(',')})`).throwOnError();
-  } else {
-    // All tasks deleted locally — clear cloud too
-    await supabase.from('tasks').delete().eq('user_id', userId).throwOnError();
-  }
-}
-
-async function pullTasks(userId) {
-  const { data, error } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('user_id', userId);
-  if (error) throw error;
-  return (data || []).map(t => ({
-    id: t.id,
-    title: t.title,
-    notes: t.notes,
-    dueDate: t.due_date,
-    complexity: t.complexity,
-    tags: t.tags || [],
-    pillars: t.pillars || [],
-    completed: t.completed,
-    completedDate: t.completed_date,
-    recurrence: t.recurrence,
-    lastCompleted: t.last_completed,
-    createdAt: t.created_at,
-  }));
-}
-
-// ── Check-ins ─────────────────────────────────────────────────────────────────
-
-async function pushCheckIns(userId, checkIns) {
-  if (!checkIns) return;
-  const rows = Object.entries(checkIns).map(([date, data]) => ({
-    user_id: userId,
-    check_in_date: date,
-    emotions: data.emotions || [],
-    notes: data.notes || null,
-  }));
-  if (!rows.length) return;
-  await supabase.from('check_ins').upsert(rows, { onConflict: 'user_id,check_in_date' }).throwOnError();
-}
-
-async function pullCheckIns(userId) {
-  const { data, error } = await supabase
-    .from('check_ins')
-    .select('check_in_date, emotions, notes')
-    .eq('user_id', userId);
-  if (error) throw error;
-  const checkIns = {};
-  (data || []).forEach(({ check_in_date, emotions, notes }) => {
-    checkIns[check_in_date] = { emotions: emotions || [], notes: notes || '' };
-  });
-  return checkIns;
-}
-
-// ── Journal prompts ───────────────────────────────────────────────────────────
-
-async function pushJournalPrompts(userId, prompts) {
-  if (!prompts?.length) return;
-  await supabase.from('journal_prompts').upsert(
-    prompts.map((p, i) => ({
-      id: p.id,
-      user_id: userId,
-      text: p.text,
-      sort_order: i,
-    })),
-    { onConflict: 'user_id,id' }
-  ).throwOnError();
-}
-
-async function pullJournalPrompts(userId) {
-  const { data, error } = await supabase
-    .from('journal_prompts')
-    .select('*')
-    .eq('user_id', userId)
-    .order('sort_order');
-  if (error) throw error;
-  return (data || []).map(p => ({ id: p.id, text: p.text }));
-}
-
-// ── Journal entries ───────────────────────────────────────────────────────────
-
-async function pushJournalEntries(userId, entries) {
-  if (!entries) return;
-  const rows = [];
-  Object.entries(entries).forEach(([date, prompts]) => {
-    Object.entries(prompts).forEach(([promptId, text]) => {
-      if (text) rows.push({ user_id: userId, entry_date: date, prompt_id: promptId, text });
-    });
-  });
-  if (!rows.length) return;
-  await supabase.from('journal_entries').upsert(rows, { onConflict: 'user_id,entry_date,prompt_id' }).throwOnError();
-}
-
-async function pullJournalEntries(userId) {
-  const { data, error } = await supabase
-    .from('journal_entries')
-    .select('entry_date, prompt_id, text')
-    .eq('user_id', userId);
-  if (error) throw error;
-  const entries = {};
-  (data || []).forEach(({ entry_date, prompt_id, text }) => {
-    if (!entries[entry_date]) entries[entry_date] = {};
-    entries[entry_date][prompt_id] = text;
-  });
-  return entries;
-}
-
-// ── Wellbeing notes ───────────────────────────────────────────────────────────
-
-async function pushWellbeingNotes(userId, notes) {
-  if (!notes) return;
-  const rows = Object.entries(notes)
-    .filter(([, text]) => text)
-    .map(([date, text]) => ({ user_id: userId, note_date: date, text }));
-  if (!rows.length) return;
-  await supabase.from('wellbeing_notes').upsert(rows, { onConflict: 'user_id,note_date' }).throwOnError();
-}
-
-async function pullWellbeingNotes(userId) {
-  const { data, error } = await supabase
-    .from('wellbeing_notes')
-    .select('note_date, text')
-    .eq('user_id', userId);
-  if (error) throw error;
-  const notes = {};
-  (data || []).forEach(({ note_date, text }) => { notes[note_date] = text; });
-  return notes;
-}
-
-// ── Library ───────────────────────────────────────────────────────────────────
-
-async function pushLibrary(userId, library) {
-  if (!library?.length) return;
-  await supabase.from('library').upsert(
-    library.map(e => ({
-      id: e.id,
-      user_id: userId,
-      title: e.title,
-      author: e.author,
-      status: e.status,
-      notes: e.notes,
-      date_started: e.dateStarted || null,
-      date_completed: e.dateCompleted || null,
-    })),
-    { onConflict: 'user_id,id' }
-  ).throwOnError();
-}
-
-async function pullLibrary(userId) {
-  const { data, error } = await supabase
-    .from('library')
-    .select('*')
-    .eq('user_id', userId);
-  if (error) throw error;
-  return (data || []).map(e => ({
-    id: e.id, title: e.title, author: e.author, status: e.status,
-    notes: e.notes, dateStarted: e.date_started, dateCompleted: e.date_completed,
-  }));
-}
-
-// ── Notifications ─────────────────────────────────────────────────────────────
-
-async function pushNotifications(userId, notifications) {
-  if (!notifications?.length) return;
-  await supabase.from('notifications').upsert(
-    notifications.map(n => ({
-      id: n.id, user_id: userId, time: n.time, message: n.message, enabled: n.enabled,
-    })),
-    { onConflict: 'user_id,id' }
-  ).throwOnError();
-}
-
-async function pullNotifications(userId) {
-  const { data, error } = await supabase
-    .from('notifications')
-    .select('*')
-    .eq('user_id', userId);
-  if (error) throw error;
-  return (data || []).map(n => ({ id: n.id, time: n.time, message: n.message, enabled: n.enabled }));
-}
-
-// ── Daily drafts ──────────────────────────────────────────────────────────────
-
-async function pushDailyDrafts(userId, drafts) {
-  if (!drafts) return;
-  const rows = Object.entries(drafts).map(([date, d]) => ({
-    user_id: userId, draft_date: date, book: d.book, audio: d.audio, notes: d.notes,
-  }));
-  if (!rows.length) return;
-  await supabase.from('daily_drafts').upsert(rows, { onConflict: 'user_id,draft_date' }).throwOnError();
-}
-
-async function pullDailyDrafts(userId) {
-  const { data, error } = await supabase
-    .from('daily_drafts')
-    .select('draft_date, book, audio, notes')
-    .eq('user_id', userId);
-  if (error) throw error;
-  const drafts = {};
-  (data || []).forEach(({ draft_date, book, audio, notes }) => {
-    drafts[draft_date] = { book, audio, notes };
-  });
-  return drafts;
-}
-
-// ── Daily message defaults ────────────────────────────────────────────────────
-
-async function pushDailyMessageDefaults(userId, defaults) {
-  await supabase.from('daily_message_defaults').upsert(
-    { user_id: userId, book: defaults?.book || '', notes: defaults?.notes || '', updated_at: new Date().toISOString() },
-    { onConflict: 'user_id' }
-  ).throwOnError();
-}
-
-async function pullDailyMessageDefaults(userId) {
-  const { data, error } = await supabase
-    .from('daily_message_defaults')
-    .select('book, notes')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error) throw error;
-  return data ? { book: data.book, notes: data.notes } : { book: '', notes: '' };
-}
-
-// ── Custom emotions ───────────────────────────────────────────────────────────
-
-async function pushCustomEmotions(userId, emotions) {
-  if (!emotions?.length) return;
-  await supabase.from('custom_emotions').upsert(
-    emotions.map(e => ({ id: e.id, user_id: userId, label: e.label, emoji: e.emoji })),
-    { onConflict: 'user_id,id' }
-  ).throwOnError();
-}
-
-async function pullCustomEmotions(userId) {
-  const { data, error } = await supabase
-    .from('custom_emotions')
-    .select('*')
-    .eq('user_id', userId);
-  if (error) throw error;
-  return (data || []).map(e => ({ id: e.id, label: e.label, emoji: e.emoji }));
-}
-
-// ── Reward milestones ─────────────────────────────────────────────────────────
-
-async function pushRewardMilestones(userId, milestone) {
-  await supabase.from('reward_milestones').upsert(
-    { user_id: userId, config: milestone, updated_at: new Date().toISOString() },
-    { onConflict: 'user_id' }
-  ).throwOnError();
-}
-
-async function pullRewardMilestones(userId) {
-  const { data, error } = await supabase
-    .from('reward_milestones')
-    .select('config')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.config || {};
-}
-
-// ── Milestone seen ────────────────────────────────────────────────────────────
-
-async function pushMilestoneSeen(userId, seen) {
-  await supabase.from('milestone_seen').upsert(
-    { user_id: userId, data: seen, updated_at: new Date().toISOString() },
-    { onConflict: 'user_id' }
-  ).throwOnError();
-}
-
-async function pullMilestoneSeen(userId) {
-  const { data, error } = await supabase
-    .from('milestone_seen')
-    .select('data')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.data || { daily: null, weekly: null, streaks: {}, consecutiveWeeks: null };
-}
-
 // ── Delete: wipe all user data from every table ───────────────────────────────
 export async function deleteAllUserData(userId) {
-  const tables = [
-    'activities', 'logs', 'tags', 'tasks', 'check_ins',
-    'journal_prompts', 'journal_entries', 'wellbeing_notes', 'library',
-    'notifications', 'daily_drafts', 'daily_message_defaults',
-    'custom_emotions', 'reward_milestones', 'milestone_seen', 'user_preferences',
-  ];
   try {
-    await Promise.all(
-      tables.map(t => supabase.from(t).delete().eq('user_id', userId))
-    );
+    await Promise.all(TABLES.map(d => supabase.from(d.table).delete().eq('user_id', userId)));
+    resetSyncState();
   } catch (err) {
     captureError(err instanceof Error ? err : new Error(String(err)), { context: 'deleteAllUserData' });
     throw err;
