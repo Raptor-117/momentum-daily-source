@@ -293,7 +293,9 @@ async function pushLogs(userId, logs, activities = []) {
   Object.entries(logs).forEach(([activityId, dateCounts]) => {
     if (!known.has(activityId)) return;
     Object.entries(dateCounts).forEach(([logDate, count]) => {
-      if (count > 0) rows.push({ user_id: userId, activity_id: activityId, log_date: logDate, count });
+      // Zeros too: tapping − back to 0 must overwrite the cloud's old count, or the
+      // next pull brings the un-logged point back.
+      if (count >= 0) rows.push({ user_id: userId, activity_id: activityId, log_date: logDate, count });
     });
   });
   if (!rows.length) return;
