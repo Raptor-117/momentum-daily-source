@@ -5,6 +5,15 @@
 // would notice — no technical detail. Add an entry with every merge to prod.
 export const CHANGELOG = [
   {
+    date: '2026-11-15',
+    title: 'Safer saving and Tracker tweaks',
+    items: [
+      'Fixed: a point added just before closing the app could disappear. Changes now save as soon as you leave the app.',
+      'Tracker categories show their change since last week or month, e.g. Health 84% ▲6%.',
+      'The Tracker calendar starts on the first day of the week you chose in Settings.',
+    ],
+  },
+  {
     date: '2026-11-12',
     title: "What's new",
     items: [
