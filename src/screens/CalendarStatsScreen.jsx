@@ -523,8 +523,8 @@ function ScoreCard({ theme, title, sub, result, prev, prevLabel, goal, chart, ch
                 <span className={`tabular-nums ${theme.muted}`}>
                   {+c.points.toFixed(1)} / {c.count} · {c.pct}%
                   {d != null && (
-                    <span className={`inline-block w-9 text-right font-semibold ${d > 0 ? 'text-green-500' : d < 0 ? 'text-rose-500' : ''}`}>
-                      {d > 0 ? '▲' : d < 0 ? '▼' : '='}{d ? Math.abs(d) : ''}
+                    <span className={`inline-block w-12 text-right font-semibold ${d > 0 ? 'text-green-500' : d < 0 ? 'text-rose-500' : ''}`}>
+                      {d > 0 ? '▲' : d < 0 ? '▼' : '='}{d ? `${Math.abs(d)}%` : ''}
                     </span>
                   )}
                 </span>

@@ -874,7 +874,7 @@ function TrackerSection({ theme, focus, onFocusHandled }) {
             <H>Your goal</H>
             <P>A personal target on top of the bands. The bars show a tick at it, and "to go" until you reach it.</P>
             <H>This week vs last week</H>
-            <P>The current week and month are scored "so far", up to today, so ▲/▼ compares fairly with the last full one.</P>
+            <P>The current week and month are scored "so far", up to today, so ▲/▼ compares fairly with the last full one. The ▲/▼ beside each category is the change in that category's %, e.g. Health 78% → 84% shows ▲6%.</P>
             <H>Calendar</H>
             <P>Each day is coloured by its daily habits; rest days don't count against you, and today stays grey until you log something. A dot means a weekly or monthly habit was logged that day. Days before 6 May 2026 are greyed: those are imported weekly totals, so only week and month scores apply.</P>
             <P>⭐ every daily habit done · 😌 check-in (your first mood) · 📖 journal · 📝 notes · ✅ tasks completed</P>
