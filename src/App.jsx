@@ -199,27 +199,41 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Background sync: push on every store change (debounced 3s) ────────────
+  // ── Background sync: push on every store change (debounced 1s) ────────────
+  // Closing the app right after an edit used to lose it: the push waited 3s and
+  // never ran, and on Android the local save itself may not reach disk before the
+  // app is killed — so on reopen a pull brought back the old cloud copy. Now the
+  // push goes out after 1s, or immediately when the app is hidden/closed.
   useEffect(() => {
-    const unsubscribe = useStore.subscribe(() => {
+    function pushNow() {
+      if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
       const user = authUserRef.current;
       if (!user) return;
+      pushInFlightRef.current = true;
+      pushAllData(user.id, useStore.getState())
+        .then(() => { try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ } })
+        .catch(err => captureError(err, { context: 'backgroundPush' }))
+        .finally(() => { pushInFlightRef.current = false; });
+    }
+    const unsubscribe = useStore.subscribe(() => {
       if (applyingRemoteRef.current) return; // change came FROM a cloud pull — don't mark dirty or re-push
-      // Mark local dirty NOW (synchronous, survives an app close before the debounced
-      // push fires) so a later pull can't overwrite work that never reached the cloud.
+      // Mark local dirty NOW (synchronous, survives an app close before the push)
+      // so a later pull can't overwrite work that never reached the cloud. Done even
+      // before the session is restored: an edit in the first moment after opening
+      // must still block the startup pull.
       try { localStorage.setItem('momentum-unpushed', '1'); } catch { /* ignore */ }
+      if (!authUserRef.current) return;
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-      syncTimerRef.current = setTimeout(() => {
-        syncTimerRef.current = null;      // no longer pending — now in flight
-        pushInFlightRef.current = true;
-        pushAllData(user.id, useStore.getState())
-          .then(() => { try { localStorage.setItem('momentum-unpushed', '0'); } catch { /* ignore */ } })
-          .catch(err => captureError(err, { context: 'backgroundPush' }))
-          .finally(() => { pushInFlightRef.current = false; });
-      }, 3000);
+      syncTimerRef.current = setTimeout(pushNow, 1000);
     });
+    // Leaving the app: send any pending push right away instead of waiting.
+    function flushOnHide() { if (document.visibilityState === 'hidden' && syncTimerRef.current) pushNow(); }
+    document.addEventListener('visibilitychange', flushOnHide);
+    window.addEventListener('pagehide', flushOnHide);
     return () => {
       unsubscribe();
+      document.removeEventListener('visibilitychange', flushOnHide);
+      window.removeEventListener('pagehide', flushOnHide);
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     };
   }, []);
