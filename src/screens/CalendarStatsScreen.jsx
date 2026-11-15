@@ -30,7 +30,7 @@ function exportCSV(filename, rows) {
 
 // ─── Calendar heatmap ─────────────────────────────────────────────────────────
 function CalendarView({ theme, gamify, onShowScoringHelp }) {
-  const { activities, logs, checkIns, journalEntries, journalPrompts, wellbeingNotes, tasks, logActivity, setLogCount, customEmotions } = useStore();
+  const { activities, logs, checkIns, journalEntries, journalPrompts, wellbeingNotes, tasks, logActivity, setLogCount, customEmotions, weekStartDay } = useStore();
   const EMOTION_EMOJI = buildEmotionMap(customEmotions);
   const now          = new Date();
   const todayDateStr = todayStr();
@@ -60,7 +60,8 @@ function CalendarView({ theme, gamify, onShowScoringHelp }) {
   const loggedNonDaily = (dateStr) =>
     activities.some(a => (a.cadence === 'weekly' || a.cadence === 'monthly') && (logs[a.id] || {})[dateStr] > 0);
 
-  const firstDow    = new Date(viewYear, viewMonth, 1).getDay();
+  // Columns start on the first day of the week chosen in Settings.
+  const firstDow    = (new Date(viewYear, viewMonth, 1).getDay() - weekStartDay + 7) % 7;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const cells = [
     ...Array(firstDow).fill(null),
@@ -85,7 +86,7 @@ function CalendarView({ theme, gamify, onShowScoringHelp }) {
 
       {/* DOW headers */}
       <div className="grid grid-cols-7 mb-1">
-        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+        {getDayLabels(weekStartDay).map(d => (
           <div key={d} className={`text-center text-xs font-medium py-1 ${theme.muted}`}>{d}</div>
         ))}
       </div>
