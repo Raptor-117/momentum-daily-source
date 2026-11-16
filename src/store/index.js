@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   DEFAULT_ACTIVITIES, DEFAULT_TAGS, MOCK_TASKS, MOCK_LOGS,
-  getWeekDays, calcStreak, todayStr, toDateStr, normalizeActivity,
+  getWeekDays, todayStr, toDateStr, normalizeActivity,
 } from '../data';
 
 const DEFAULT_JOURNAL_PROMPTS = [
@@ -125,10 +125,6 @@ export const useStore = create(
       getWeeklyTotal: (activityId, weekStartStr) => {
         const actLogs = get().logs[activityId] || {};
         return getWeekDays(weekStartStr).reduce((sum, d) => sum + (actLogs[d] || 0), 0);
-      },
-
-      getStreak: (activityId) => {
-        return calcStreak(get().logs[activityId] || {});
       },
 
       getMonthlyTotal: (activityId, year, month) => {

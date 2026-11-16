@@ -9,7 +9,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../store';
-import { todayStr, getWeekStart, getWeekDays, MONTH_NAMES_FULL, calcPerfectDayStreak, CADENCES, weeklyGoal } from '../data';
+import { todayStr, getWeekStart, getWeekDays, MONTH_NAMES_FULL, CADENCES, weeklyGoal } from '../data';
+import { streak as habitStreak, perfectDayStreak } from '../data/scoring';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const DAY_NAMES  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -141,7 +142,7 @@ function DragHandle({ handleProps, theme }) {
 
 // ─── Habit card ───────────────────────────────────────────────────────────────
 function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, hasLogs, dragHandleProps, isDragOverlay, viewDate }) {
-  const { updateActivity, getCount, getStreak, logActivity, weekStartDay, logs } = useStore();
+  const { updateActivity, getCount, logActivity, weekStartDay, logs } = useStore();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [confirmDel,   setConfirmDel]   = useState(false);
   const [localTarget,  setLocalTarget]  = useState(String(activity.target ?? 1));
@@ -298,7 +299,9 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
   // ── VIEW MODE ──────────────────────────────────────────────────────────────
   const weekStart = getWeekStart(viewDate, weekStartDay);
   const count     = getCount(activity.id, viewDate);
-  const streak    = getStreak(activity.id);
+  // Daily: due days in a row (rest days skipped). Weekly: weeks in a row target hit.
+  const streak    = habitStreak(activity, logs, todayStr(), d => getWeekStart(d, weekStartDay));
+  const streakUnit = activity.cadence === 'weekly' ? 'w' : 'd';
   const { done, goal, unitLabel } = periodProgress(activity, viewDate, weekStart, logs);
   const hit       = activity.hasTarget && done >= goal;
   const pct       = activity.hasTarget && goal > 0 ? Math.round((done / goal) * 100) : 0;
@@ -338,7 +341,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
 
         {streak > 0 && (
           <span className={`text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 border ${theme.streakBadge}`}>
-            🔥 {streak}d
+            🔥 {streak}{streakUnit}
           </span>
         )}
 
@@ -602,7 +605,7 @@ export default function HabitsScreen({ theme, gamify, onNavigate }) {
   // ── Reward milestone watchers ─────────────────────────────────────────────
   const weekDays          = getWeekDays(weekStart);
   const todayLoggedCount  = activeActivities.filter(a => (logs[a.id] || {})[today] > 0).length;
-  const perfectStreak     = calcPerfectDayStreak(activeActivities, logs);
+  const perfectStreak     = perfectDayStreak(activities, logs, today);
   const cwHabits          = rewardMilestone?.consecutiveWeeksHabits || [];
   const consecutiveWeeksCount = rewardMilestone?.consecutiveWeeksEnabled && cwHabits.length
     ? calcConsecutiveWeeks(cwHabits, logs, activeActivities, weekStart)

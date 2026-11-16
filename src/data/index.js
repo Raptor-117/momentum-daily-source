@@ -150,49 +150,6 @@ export function getCalendarMonthChunks(year, month) {
   return chunks;
 }
 
-// Consecutive perfect-day streak (all hasTarget habits logged) up to today
-export function calcPerfectDayStreak(activities, logs) {
-  const goalActivities = activities.filter(a => !a.archived && a.hasTarget);
-  if (!goalActivities.length) return 0;
-  let streak = 0;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const check = new Date(today);
-  // Grace period: if today isn't perfect yet, count from yesterday
-  const todayDs = toDateStr(today);
-  const todayPerfect = goalActivities.every(a => (logs[a.id] || {})[todayDs] > 0);
-  if (!todayPerfect) check.setDate(check.getDate() - 1);
-  while (true) {
-    const ds = toDateStr(check);
-    if (goalActivities.every(a => (logs[a.id] || {})[ds] > 0)) {
-      streak++;
-      check.setDate(check.getDate() - 1);
-    } else break;
-  }
-  return streak;
-}
-
-// Consecutive-day streak up to today where count > 0
-export function calcStreak(actLogs) {
-  let streak = 0;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const check = new Date(today);
-  // If today hasn't been logged yet, start from yesterday so the streak
-  // stays visible all day and only breaks at midnight if yesterday was also missed
-  if (!(actLogs[toDateStr(today)] > 0)) {
-    check.setDate(check.getDate() - 1);
-  }
-  while (true) {
-    const ds = toDateStr(check);
-    if ((actLogs[ds] || 0) > 0) {
-      streak++;
-      check.setDate(check.getDate() - 1);
-    } else break;
-  }
-  return streak;
-}
-
 export function formatDisplayDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');

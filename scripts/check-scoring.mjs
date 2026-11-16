@@ -1,7 +1,7 @@
 // Self-check for tracker scoring: node scripts/check-scoring.mjs
 import assert from 'node:assert';
 import { getWeekStart, getWeekDays } from '../src/data/index.js';
-import { scorePeriod, habitCredit, bandFor, monthDays, streak } from '../src/data/scoring.js';
+import { scorePeriod, habitCredit, bandFor, monthDays, streak, perfectDayStreak } from '../src/data/scoring.js';
 
 const H = (id, cadence, target, extra = {}) => ({
   id, cadence, target, tags: [],
@@ -89,5 +89,16 @@ assert.equal(streak(gym, { gym: { ...gymLogs.gym, '2026-10-23': 1 } }, '2026-10-
 const wk = H('date', 'weekly', 1);
 assert.equal(streak(wk, { date: L('2026-10-03', '2026-10-12') }, '2026-10-23', ws), 2); // this week pending
 assert.equal(streak(H('m', 'monthly', 1), {}, '2026-10-23', ws), null);
+
+// Perfect-day streak: every daily habit due that day done; rest days skipped; weekly
+// habits don't count (v1 required them every day, so the streak was always ~0).
+const pd = [H('med', 'daily', 1), H('gym', 'daily', 1, { scheduledDays: [1, 3, 5] }), H('date', 'weekly', 1)];
+const pdLogs = {
+  med: L('2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22'),
+  gym: L('2026-10-19', '2026-10-21'), // Thu 22 is a gym rest day
+};
+assert.equal(perfectDayStreak(pd, pdLogs, '2026-10-22'), 4);
+assert.equal(perfectDayStreak(pd, pdLogs, '2026-10-23'), 4); // Fri not done yet — today doesn't break it
+assert.equal(perfectDayStreak(pd, { ...pdLogs, gym: L('2026-10-21') }, '2026-10-22'), 3); // missed Mon gym
 
 console.log('scoring checks passed');

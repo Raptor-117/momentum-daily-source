@@ -107,6 +107,22 @@ export function scorePeriod(activities, logs, days, kind) {
   };
 }
 
+const back = (d, n) => { const x = new Date(d + 'T00:00:00'); x.setDate(x.getDate() - n); return toDateStr(x); };
+
+// Perfect days in a row: every daily habit due that day fully done (the calendar's ⭐).
+// Days with nothing due (rest days) are skipped; today doesn't break it until it's over.
+// ponytail: scores each day from scratch — fine until streaks run to many hundreds of days.
+export function perfectDayStreak(activities, logs, today) {
+  let n = 0;
+  for (let d = today; d >= DAILY_LOGGING_FROM; d = back(d, 1)) {
+    const { pct } = scorePeriod(activities, logs, [d], 'day');
+    if (pct == null) continue;
+    if (pct === 100) n++;
+    else if (d !== today) break;
+  }
+  return n;
+}
+
 // Current streak. Daily habits: consecutive due days hit (rest days skipped, today
 // doesn't break it until it's over). Weekly: consecutive weeks hit, same grace for
 // the current week. Monthly/log: null.
@@ -114,7 +130,6 @@ export function scorePeriod(activities, logs, days, kind) {
 export function streak(a, logs, today, weekStartOf) {
   const span = spanOf(a, logs), { start } = span;
   const cfg = configOn(a, today);
-  const back = (d, n) => { const x = new Date(d + 'T00:00:00'); x.setDate(x.getDate() - n); return toDateStr(x); };
   let n = 0;
   if (cfg.cadence === 'daily') {
     for (let d = today; d >= start && d >= DAILY_LOGGING_FROM; d = back(d, 1)) {
