@@ -87,7 +87,12 @@ function periodProgress(a, viewDate, weekStart, logs) {
   const byDate = logs[a.id] || {};
   if (a.cadence === 'daily') {
     const due = getWeekDays(weekStart).filter(d => isDueOn(a, d));
-    return { done: due.filter(d => (byDate[d] || 0) >= a.target).length, goal: due.length, unitLabel: 'days this week' };
+    const hitOn = d => (byDate[d] || 0) >= a.target;
+    // The bar judges the week SO FAR: due days before the viewed day, plus that day
+    // once it's done — so Monday at 3/3 reads 100%, not a red 43%.
+    const soFar = due.filter(d => d < viewDate || (d === viewDate && hitOn(d)));
+    return { done: due.filter(hitOn).length, goal: due.length, unitLabel: 'days this week',
+             pace: soFar.length ? soFar.filter(hitOn).length / soFar.length : null };
   }
   if (a.cadence === 'monthly') {
     const month = viewDate.slice(0, 7);
@@ -302,10 +307,12 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
   // Daily: due days in a row (rest days skipped). Weekly: weeks in a row target hit.
   const streak    = habitStreak(activity, logs, todayStr(), d => getWeekStart(d, weekStartDay));
   const streakUnit = activity.cadence === 'weekly' ? 'w' : 'd';
-  const { done, goal, unitLabel } = periodProgress(activity, viewDate, weekStart, logs);
+  const { done, goal, unitLabel, pace } = periodProgress(activity, viewDate, weekStart, logs);
   const hit       = activity.hasTarget && done >= goal;
-  const pct       = activity.hasTarget && goal > 0 ? Math.round((done / goal) * 100) : 0;
-  const barWidth  = Math.min(100, pct);
+  // Daily habits: % of due days so far (null = nothing due yet this week). Others: % of target.
+  const pct       = pace !== undefined ? (pace == null ? null : Math.round(pace * 100))
+                  : activity.hasTarget && goal > 0 ? Math.round((done / goal) * 100) : 0;
+  const barWidth  = Math.min(100, pct ?? 0);
   const dueToday  = isDueOn(activity, viewDate);
   const schedLabel = scheduledLabel(activity.scheduledDays);
 
@@ -366,7 +373,7 @@ function HabitCard({ activity, allTags, theme, editMode, onDelete, onArchive, ha
           <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${theme.progressBg}`}>
             <div className={`h-1.5 rounded-full transition-all duration-500 ${barColor(pct)}`} style={{ width: `${barWidth}%` }} />
           </div>
-          <span className={`text-xs font-medium w-10 text-right ${pct >= 100 ? 'text-green-500 font-bold' : hit ? theme.hitTarget : theme.muted}`}>{pct}%</span>
+          <span className={`text-xs font-medium w-10 text-right ${pct >= 100 ? 'text-green-500 font-bold' : hit ? theme.hitTarget : theme.muted}`}>{pct == null ? '–' : `${pct}%`}</span>
         </div>
       )}
     </div>
